@@ -2,7 +2,7 @@
 
 #### Attack classes — choose and split based on Phase 1
 
-Select attack classes relevant to the application type. Not every class applies to every codebase. The list below is a starting point; add application-specific classes from Phase 1 and split large codebases per subsystem. Frame hunting work as finding, validating, and prioritizing vulnerabilities; fixes are designed in a separate step after validation. Keep validation to source review and bounded local fixtures; do not develop payload chains, test availability on live services, or take action in shared environments.
+Select attack classes relevant to the application type. Not every class applies to every codebase. The list below is a starting point; add application-specific classes from Phase 1 and split large codebases per subsystem. Frame work as finding, validating, fixing, and prioritizing vulnerabilities. Keep validation to source review and bounded local fixtures; do not develop payload chains, test availability on live services, or take action in shared environments.
 
 Use `confirmed` only when source evidence and bounded validation establish the full boundary and meaningful result. Use `needs_validation` when a specific deployment, provider, platform, identity, or runtime fact is unavailable; state the missing fact and the safe owner-observed or local check that resolves it.
 
@@ -12,7 +12,7 @@ Use `confirmed` only when source evidence and bounded validation establish the f
 >
 > **HTTP, web, and identity targets** (ordinary web apps, APIs, reverse proxies, CDNs, gateways, custom HTTP parsers, sessions, CSRF, JWT, OAuth/OIDC, SAML, MFA, passkeys, account recovery/linking, API keys, or mTLS): use [WEB-PROTOCOL-AND-AUTH.md](WEB-PROTOCOL-AND-AUTH.md).
 >
-> **Cryptography and key-management targets** (security-sensitive encryption, MACs/signatures, random credentials, nonces/IVs, password verifiers, JWT cryptography, TLS validation, or key storage/rotation/revocation): use [CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md](CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md).
+> **Cryptography and key-management targets** (encryption, signatures/JWT verification, security-token randomness, nonce/IV allocation, password verifiers, TLS peer validation, or secret/key lifecycles): use [CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md](CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md).
 >
 > **Client-side and browser targets** (SPAs, browser extensions, embedded webviews, service workers, browser storage, cross-window messaging, CORS, WebSockets, or DOM rendering): use [CLIENT-SIDE.md](CLIENT-SIDE.md).
 >
@@ -56,8 +56,7 @@ For complex access models, split into separate agents for auth bypass vs authori
 - Race conditions on file operations (TOCTOU between check and use)
 
 **Cryptography and secrets** (subagent_type: `general`)
-Use [CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md](CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md) for the applicable primitive, credential, transport, and key-lifecycle classes, together with its core discipline, universal moves, and validation rules. Select by the protected property and active source path; an MD5/SHA-1 occurrence or absence of KMS alone is not a finding. Keep this ordinary block in each applicable unit's `ordinary_attack_class_block` while recording the specialized class and required companion sections in `selected_companion_blocks`.
-
+Use [CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md](CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md) for detailed implementation and key-lifecycle review; retain this ordinary block with the selected companion classes in the ledger.
 - Weak randomness for security-critical values (tokens, keys, nonces)
 - Hardcoded secrets, secrets in logs, error messages, URLs, or client-visible responses
 - Broken key derivation, missing HMAC verification, nonce reuse
@@ -104,7 +103,7 @@ Use these starting points, but do not limit yourself to them:
 - What happens if you use the API in a way the frontend never would? The UI constrains users, but the API does not. What API calls are possible but never made by the client?
 - Are there any hidden or undocumented endpoints, parameters, headers, or features? Look at route registrations, middleware, and config for things that are not in the docs.
 - What happens when you mix features that were not designed to work together? Localization + preview + caching. Import + plugins + webhooks. OAuth + impersonation + API keys.
-- Is there anything interesting in the git history? Reverted security fixes, commented-out auth checks, secrets that were committed then removed (still in history). Inspect history with neutralized `git` or a clean clone (see Universal execution safety in `SKILL.md`): `git log -p`/`git show` on the target's own `.git` run any `textconv` driver the target configured.
+- Is there anything interesting in the git history? Reverted security fixes, commented-out auth checks, secrets that were committed then removed (still in history).
 - Which valid-account actions affect other users, shared integrity, availability, or operator-owned cost? Verify containment, quotas, authorization, and recovery around those actions.
 - Which operations are irreversible or require elevated confirmation? Bind authorization and approval to the final principal, action, and resource.
 - What assumptions does the code make about the environment? That the database is local, that the clock is accurate, that DNS is trustworthy, that the filesystem is case-sensitive?

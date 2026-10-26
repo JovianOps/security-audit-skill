@@ -39,8 +39,6 @@ These rules apply in both operating modes. Source inspection is read-only. Run t
 
 The agent, outside the target-controlled process, may make a disposable source copy in an assigned `scratch/` directory when a build must write beside source. In guidance mode, do not retain target-controlled files. In full audit mode, only trusted parent-side code may promote the minimum non-secret result to retained `artifacts/` using the procedure under Write isolation. Never expose a retained output directory (other than the agent's own assigned `scratch/`), another agent's directory, the host home directory, credentials, sockets, or shared services to target code. Do not install dependencies or let builds fetch them. Use only tools and dependencies already available locally. If every control cannot be enforced, do not execute target code: report the missing sandbox capability as a needs-validation blocker and give a safe validation plan.
 
-**Before declaring the sandbox unavailable, try to provision one.** In a container/WSL/Docker-in-Docker environment the agent's own `unshare`/`bwrap` may return EPERM (the container's seccomp forbids the clone) while the Docker daemon can still create a fully-isolated sibling container that satisfies every control above. [SANDBOX-DOCKER.md](SANDBOX-DOCKER.md) is the recipe (a `docker run` flag set that maps 1:1 to this section's controls) plus the environment-specific blockers that cost real time — the 9p bind-mount path, feeding the harness over stdin, and running the DB engine as a non-root user under `--cap-drop ALL`. Only fall back to `needs_validation` for a defect the sibling sandbox genuinely cannot exercise (a decisive deployment fact, an unavailable external binary, or an uncompilable target).
-
 Use dummy principals, fixtures, and secrets. Do not probe deployed endpoints, external services, shared infrastructure, production identities, other users' data, or live control planes. Do not test availability against a live or shared process, publish artifacts, alter releases, spend paid API quota, or continue beyond the minimum local effect needed to establish a defect. If the decisive fact is outside source or the sandboxed fixture, report it as needing validation.
 
 ## Full audit setup
@@ -81,7 +79,7 @@ Before execution, the parent opens and retains trusted, non-inheritable director
 10. Never recursively copy or glob scratch, extract an archive into artifacts, or open or promote a symlink, FIFO, socket, device, directory, hard-linked file, changing file, or file that exceeds its bound.
 11. If any check is unavailable, cannot be enforced, or fails, discard the scratch entry; if it is decisive evidence, retain `needs_validation` with the exact promotion blocker.
 
-[HUNTING.md](references/HUNTING.md) and [VALIDATION-AND-REPORTING.md](references/VALIDATION-AND-REPORTING.md) carry this procedure as one identical fenced block for hunter and verifier prompts; it states the same rules in the same order as this list.
+[HUNTING.md](HUNTING.md) and [VALIDATION-AND-REPORTING.md](VALIDATION-AND-REPORTING.md) carry this procedure as one identical fenced block for hunter and verifier prompts; it states the same rules in the same order as this list.
 
 For a reproduced check, record the command, exact test input, sandbox limits, and only the allowlisted environment variable names plus safe non-secret values needed to reproduce it. Never capture or copy the ambient environment, inherited variables, credential values, authentication state, or unrelated host paths. Launch from an empty environment rather than trying to redact one after execution.
 
@@ -93,7 +91,7 @@ The coverage, prior-run, profile, and budget requirements in this section apply 
 
 ### Coverage and prior runs
 
-No one pass is complete. Build a deterministic coverage plan before hunting and update it after every agent result. [RECONNAISSANCE.md](references/RECONNAISSANCE.md) defines the stable coverage units and [HUNTING.md](references/HUNTING.md) defines coverage-critic waves. The parent alone updates the ledger.
+No one pass is complete. Build a deterministic coverage plan before hunting and update it after every agent result. [RECONNAISSANCE.md](RECONNAISSANCE.md) defines the stable coverage units and [HUNTING.md](HUNTING.md) defines coverage-critic waves. The parent alone updates the ledger.
 
 If prior runs exist, read every compatible `coverage-ledger.json` and `findings.json` before planning the current run:
 
@@ -149,8 +147,6 @@ Static analysis establishes the source path. Sandboxed local tests resolve behav
 
 Deployment controls, proxy behavior, provider settings, browser headers, identity policy, broker ACLs, packaging, and topology are real controls. If they are required and absent from the repository, do not assume either presence or absence. Use `needs_validation` with the exact missing fact and a safe owner-observed or local plan.
 
-Distinguish a control that prevents the attack from a configuration that merely leaves the defect inert today. When the defective code path exists and a supported, documented, or shipped option would make it reachable, the reachability is a deployment fact: use `needs_validation` naming that option, not a hardening note. A hardening note claims no supported configuration reaches the path, or that a visible control prevents it.
-
 ### Separate priority from certainty
 
 Only `confirmed` records receive severity. Likelihood and impact must reflect the demonstrated conditions and result; overall severity cannot exceed demonstrated impact. `needs_validation` means a specific source-grounded boundary hypothesis is blocked, not a low-confidence confirmed vulnerability, and it has no severity.
@@ -171,14 +167,14 @@ For each confirmed finding, identify the invariant the code must enforce and the
 
 ## Full audit workflow
 
-When source uses cryptography at a security boundary, select the relevant blocks from [CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md](CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md): encryption and authentication primitives, randomness and nonces, password hashing, JWT signing/verification, TLS certificate validation, and key storage/rotation/revocation. Pair them with the ordinary `Cryptography and secrets` class and any applicable web or cloud companion blocks; record the exact selection in each coverage unit as defined in [RECONNAISSANCE.md](RECONNAISSANCE.md).
+For cryptographic implementation and key-lifecycle boundaries, select [CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md](CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md): encryption, randomness, nonce/IV handling, signatures/JWT, password hashing, TLS peer validation, and key storage/rotation. In guidance mode, read only relevant blocks. In full audit mode, include applicable classes in the coverage ledger using the companion-selection rules in [RECONNAISSANCE.md](RECONNAISSANCE.md).
 
 In full audit mode, follow all six phases in order:
 
-1. **Reconnaissance** — map the source, trust boundaries, local build paths, companion selections, prior evidence, and initial deterministic coverage ledger with [RECONNAISSANCE.md](references/RECONNAISSANCE.md).
-2. **Coverage-led hunting waves** — assign isolated hunters from the ledger and collect structured candidate results with [HUNTING.md](references/HUNTING.md), [ATTACK-CLASSES.md](references/ATTACK-CLASSES.md), and the selected domain companions.
-3. **Candidate validation** — consolidate fingerprints and give every candidate to a fresh source verifier as defined in [VALIDATION-AND-REPORTING.md](references/VALIDATION-AND-REPORTING.md).
-4. **Structured output** — write all final `confirmed`, `needs_validation`, and `rejected` records to `findings.json`; validate it with `resources/report-schema.json` and `scripts/validate-findings.cjs`, and validate the coverage claim with `scripts/validate-coverage-ledger.cjs`.
+1. **Reconnaissance** — map the source, trust boundaries, local build paths, companion selections, prior evidence, and initial deterministic coverage ledger with [RECONNAISSANCE.md](RECONNAISSANCE.md).
+2. **Coverage-led hunting waves** — assign isolated hunters from the ledger and collect structured candidate results with [HUNTING.md](HUNTING.md), [ATTACK-CLASSES.md](ATTACK-CLASSES.md), and the selected domain companions.
+3. **Candidate validation** — consolidate fingerprints and give every candidate to a fresh source verifier as defined in [VALIDATION-AND-REPORTING.md](VALIDATION-AND-REPORTING.md).
+4. **Structured output** — write all final `confirmed`, `needs_validation`, and `rejected` records to `findings.json`; validate it with `report-schema.json` and `validate-findings.cjs`, and validate the coverage claim with `validate-coverage-ledger.cjs`.
 5. **Independent record verification** — use fresh agents to verify final source claims and reconcile corrections or state changes.
 6. **Target-neutral report** — derive `REPORT.md`, `FINDINGS-DETAIL.md`, and `NEEDS-VALIDATION.md` from the final records, with no live-probe instructions.
 
