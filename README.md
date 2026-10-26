@@ -4,8 +4,6 @@ A coding-agent skill that turns your agent into a security auditor. It orchestra
 
 This is the skill that seeded Cloudflare's vulnerability discovery harness, described in [Build your own vulnerability harness](https://blog.cloudflare.com/build-your-own-vulnerability-harness). The harness grew into a multi-stage, fleet-wide system; this skill is the single-repo starting point it evolved from.
 
-This fork also ships a second skill, [`security-review`](skills/security-review), a lighter adaptation of the same method for the Builders engineering family. It keeps the upstream verification spine (three verdicts, adversarial independence, severity-requires-impact, the hardened validators) and adds plain-language consequence framing, risk tiers, and explicit handoffs to sibling skills so a review can feed a release gate. Use `security-audit` for the full multi-agent harness and `security-review` when you want a review that speaks the Builders family's language. See its [NOTICE](skills/security-review/NOTICE.md) for attribution.
-
 ## What it does
 
 The skill runs a structured audit in six phases:
@@ -13,11 +11,13 @@ The skill runs a structured audit in six phases:
 1. **Reconnaissance** -- map architecture, trust boundaries, input surfaces, prior evidence, and deterministic coverage in `architecture.md` and `coverage-ledger.json`.
 2. **Coverage-led hunting** -- assign isolated hunters from ledger units, record their checks, and use coverage critics to find gaps.
 3. **Candidate validation** -- give every unique candidate to a fresh verifier that tries to disprove it.
-4. **Structured output** -- write `confirmed`, `needs_validation`, and `rejected` records to `findings.json` and validate them against `skills/security-audit/resources/report-schema.json`.
+4. **Structured output** -- write `confirmed`, `needs_validation`, and `rejected` records to `findings.json` and validate them against `report-schema.json`.
 5. **Independent record verification** -- fresh agents verify final source claims. Material replacements receive another independent verifier.
 6. **Target-neutral reporting** -- derive `REPORT.md`, `FINDINGS-DETAIL.md`, and `NEEDS-VALIDATION.md` from the verified records and coverage ledger.
 
-The parent runs `skills/security-audit/scripts/validate-coverage-ledger.cjs` after creating the ledger and after each later ledger update. It runs `skills/security-audit/scripts/validate-findings.cjs` in Phase 4 and again after every Phase 5 replacement.
+The parent runs `validate-coverage-ledger.cjs` after creating the ledger and after each later ledger update. It runs `validate-findings.cjs` in Phase 4 and again after every Phase 5 replacement.
+
+Once Phase 3 has moved validated units to `candidate`, run `validate-cross-consistency.cjs` to prove the pairing between the two files: every record in `findings.json` must trace by fingerprint to a `candidate` ledger unit that actually validated it. Run it while the ledger still holds the candidate fingerprints (before Phase 5 final dispositions clear them); an orphan fingerprint means the report claims a record no coverage unit ever produced.
 
 The verdicts are distinct: `confirmed` has a complete source trace and bounded observed result, `needs_validation` has an exact unresolved fact and no severity, and `rejected` records a disproved candidate.
 
@@ -27,26 +27,28 @@ Multiple runs against the same repo are additive. The skill uses prior ledgers a
 
 | File | Purpose |
 |------|---------|
-| `skills/security-audit/SKILL.md` | Setup, core principles, platform terminology, workflow overview, and audit anti-patterns |
-| `skills/security-audit/references/RECONNAISSANCE.md` | Phase 1 reconnaissance prompts and synthesis instructions |
-| `skills/security-audit/references/HUNTING.md` | Phase 2 orchestration, hunting methodology, and validation rules |
-| `skills/security-audit/references/ATTACK-CLASSES.md` | Core, wildcard, and obvious-things attack prompts |
-| `skills/security-audit/references/MEMORY-SAFETY-AND-BINARY.md` | Memory-safety, binary, and kernel hunting classes for native targets |
-| `skills/security-audit/references/AI-AND-LLM.md` | Prompt-injection, agent/tool, and output-handling hunting classes for LLM-backed targets |
-| `skills/security-audit/references/WEB-PROTOCOL-AND-AUTH.md` | HTTP request-framing, cache, and authentication-protocol hunting classes for HTTP-protocol and auth targets |
-| `skills/security-audit/references/CLIENT-SIDE.md` | DOM-injection, messaging-trust, UI-redress, and prototype-pollution hunting classes for client-side/browser targets |
-| `skills/security-audit/references/SUPPLY-CHAIN-AND-RELEASE.md` | Dependency, CI, release, signing, update, plugin, and extension hunting classes |
-| `skills/security-audit/references/CLOUD-AND-DEPLOYMENT.md` | IAM, infrastructure-as-code, container, serverless, ingress, and runtime-configuration hunting classes |
-| `skills/security-audit/references/PROTOCOLS-RPC-AND-MESSAGING.md` | RPC, serialization, queue, broker, webhook, and streaming-protocol hunting classes |
-| `skills/security-audit/references/RESOURCE-EXHAUSTION-AND-AVAILABILITY.md` | Shared resource, quota, queue, worker, and operator-spend hunting classes |
-| `skills/security-audit/references/DATA-ISOLATION-AND-LIFECYCLE.md` | Tenant isolation, cache, search, export, backup, migration, deletion, and restore hunting classes |
-| `skills/security-audit/references/DESKTOP-MOBILE-AND-LOCAL-IPC.md` | Native app, deep-link, webview, exported-component, helper, daemon, and local-IPC hunting classes |
-| `skills/security-audit/references/VALIDATION-AND-REPORTING.md` | Phases 3–6 candidate validation, structured output, record verification, and reporting |
-| `skills/security-audit/resources/report-schema.json` | JSON schema for all three `findings.json` verdicts |
-| `skills/security-audit/scripts/validate-findings.cjs` | Zero-dependency validator for `findings.json` in Phases 4 and 5 |
-| `skills/security-audit/scripts/validate-findings.test.cjs` | Findings-validator tests and producer-compatible fixture checks |
-| `skills/security-audit/scripts/validate-coverage-ledger.cjs` | Zero-dependency validator for `coverage-ledger.json` in Phases 1–5 |
-| `skills/security-audit/scripts/validate-coverage-ledger.test.cjs` | Coverage-ledger validator tests |
+| `SKILL.md` | Setup, core principles, platform terminology, workflow overview, and audit anti-patterns |
+| `RECONNAISSANCE.md` | Phase 1 reconnaissance prompts and synthesis instructions |
+| `HUNTING.md` | Phase 2 orchestration, hunting methodology, and validation rules |
+| `ATTACK-CLASSES.md` | Core, wildcard, and obvious-things attack prompts |
+| `MEMORY-SAFETY-AND-BINARY.md` | Memory-safety, binary, and kernel hunting classes for native targets |
+| `AI-AND-LLM.md` | Prompt-injection, agent/tool, and output-handling hunting classes for LLM-backed targets |
+| `WEB-PROTOCOL-AND-AUTH.md` | HTTP request-framing, cache, and authentication-protocol hunting classes for HTTP-protocol and auth targets |
+| `CLIENT-SIDE.md` | DOM-injection, messaging-trust, UI-redress, and prototype-pollution hunting classes for client-side/browser targets |
+| `SUPPLY-CHAIN-AND-RELEASE.md` | Dependency, CI, release, signing, update, plugin, and extension hunting classes |
+| `CLOUD-AND-DEPLOYMENT.md` | IAM, infrastructure-as-code, container, serverless, ingress, and runtime-configuration hunting classes |
+| `PROTOCOLS-RPC-AND-MESSAGING.md` | RPC, serialization, queue, broker, webhook, and streaming-protocol hunting classes |
+| `RESOURCE-EXHAUSTION-AND-AVAILABILITY.md` | Shared resource, quota, queue, worker, and operator-spend hunting classes |
+| `DATA-ISOLATION-AND-LIFECYCLE.md` | Tenant isolation, cache, search, export, backup, migration, deletion, and restore hunting classes |
+| `DESKTOP-MOBILE-AND-LOCAL-IPC.md` | Native app, deep-link, webview, exported-component, helper, daemon, and local-IPC hunting classes |
+| `VALIDATION-AND-REPORTING.md` | Phases 3–6 candidate validation, structured output, record verification, and reporting |
+| `report-schema.json` | JSON schema for all three `findings.json` verdicts |
+| `validate-findings.cjs` | Zero-dependency validator for `findings.json` in Phases 4 and 5 |
+| `validate-findings.test.cjs` | Findings-validator tests and producer-compatible fixture checks |
+| `validate-coverage-ledger.cjs` | Zero-dependency validator for `coverage-ledger.json` in Phases 1–5 |
+| `validate-coverage-ledger.test.cjs` | Coverage-ledger validator tests |
+| `validate-cross-consistency.cjs` | Zero-dependency cross-validator: findings fingerprints must trace to validated ledger candidates |
+| `validate-cross-consistency.test.cjs` | Cross-validator tests |
 
 ## Installation
 
@@ -66,30 +68,6 @@ npx skills add https://github.com/cloudflare/security-audit-skill \
 ```
 
 Run `npx skills --help` for agent-selection and non-interactive options.
-
-### Uploading a ZIP in the Claude app
-
-GitHub's **Code → Download ZIP** downloads the entire repository. Do not upload
-that archive directly in **Settings → Skills → Add → Upload Skills**: its
-`SKILL.md` is nested under `security-audit-skill-main/skills/security-audit/`,
-which is deeper than the uploader accepts.
-
-Instead, extract the repository archive, open its `skills` directory, and
-compress the **`security-audit` folder** into a new ZIP. Keep all files in that
-folder, including the companion documents, schema, and validators. For example,
-with a command-line ZIP tool, run this from the extracted repository directory:
-
-```bash
-cd skills
-zip -r security-audit.zip security-audit
-```
-
-The new archive should contain `security-audit/SKILL.md` directly inside its
-top-level `security-audit` folder, without the repository or `skills` parent
-directories. Upload this `security-audit.zip` through **Upload Skills**.
-
-This changes the archive layout only; the audit's tool and sandbox requirements
-in [Requirements](#requirements) still apply.
 
 ## Usage
 
@@ -112,7 +90,7 @@ The skill activates automatically when the request matches its trigger (security
 ## Requirements
 
 - A coding agent with a model that supports tool use and parallel sub-agents
-- Node.js for the zero-dependency findings and coverage-ledger validators. On POSIX they open input with `O_NOFOLLOW | O_NONBLOCK`; on Windows, which has neither flag, they refuse links, junctions, devices, and pipes by `lstat` and require the opened file to keep the same volume and file ID. Other platforms without the flags reject all input. Run their tests with `node --test "skills/security-audit/*.test.cjs"`; CI runs them on Linux, macOS, and Windows.
+- Node.js for the zero-dependency findings and coverage-ledger validators
 - An OS-enforced sandbox for target-controlled builds, tests, processes, browsers, emulators, fuzzers, and fixtures. It must disable external networking, use a sanitized allowlisted environment, enforce resource limits, and allow writes only to assigned scratch paths. Without these controls, the workflow keeps the lead as `needs_validation` instead of executing target code.
 
 ## Design principles
@@ -122,6 +100,11 @@ The skill activates automatically when the request matches its trigger (security
 - **Severity requires impact.** Likelihood x impact, not deviation from a checklist.
 - **Defense-in-depth gaps are not vulnerabilities.** If Layer A prevents the attack, the absence of Layer B is a hardening note.
 - **Multiple runs improve coverage.** In our test runs, a single run found roughly half of the vulnerabilities that repeated runs found in total.
+
+## Scope and limits
+
+- **Known vulnerabilities in pinned dependencies are out of scope.** Nothing in the workflow fetches advisory or CVE data, and hunters run without external networking, so a disclosed vulnerability in a dependency version that postdates the model's knowledge will not be found. A known-vulnerable dependency is also not a finding by itself: it needs a demonstrated resolution, build, or execution boundary. Run a dependency scanner alongside this skill if that coverage matters.
+- **Facts the audit cannot observe stay open.** A lead that depends on an external or deployment fact is recorded as `needs_validation` with that fact named, not guessed at.
 
 ## Contact
 

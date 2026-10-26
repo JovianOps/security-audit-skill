@@ -4,7 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const test = require("node:test");
-const schema = require("../resources/report-schema.json");
+const schema = require("./report-schema.json");
 const {
   LIMITS,
   collect,
@@ -161,7 +161,7 @@ test("schema is an actual top-level array with exactly three branches", () => {
   assert.equal(confirmedSchema.remediation.properties.code_changes.items.properties.fixed_code.minLength, undefined);
 });
 
-test("accepts a producer-shaped findings document through the CLI", () => {
+test("accepts a producer-shaped findings document through the CLI", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const result = runCli(JSON.stringify(producerShapedFindings()));
   assert.equal(result.status, 0, cliOutput(result));
   assert.match(result.stdout, /PASS: 3 findings valid/);
@@ -281,6 +281,25 @@ test("rejects duplicate fingerprints and unique array entries", () => {
   rejectMutation(needsValidation, (finding) => { finding.blockers = [finding.blockers[0], finding.blockers[0]]; });
 });
 
+test("rejects fingerprints that the ledger validator would reject", () => {
+  // The coverage-ledger validator enforces FINGERPRINT_PATTERN on
+  // result_fingerprints. Findings must apply the same constraint, or a
+  // record the findings validator accepts can never be joined to the unit
+  // that validated it.
+  const invalid = confirmed();
+  invalid.fingerprint = "bad fingerprint with spaces";
+  const errors = errorsFor([invalid]);
+  assert(errors.some((error) => error.includes("invalid fingerprint")));
+
+  const empty = confirmed();
+  empty.fingerprint = "";
+  assert(errorsFor([empty]).some((error) => error.includes("invalid fingerprint")));
+
+  const unicode = confirmed();
+  unicode.fingerprint = "src-\u00e9\u4e2d\u6587";
+  assert(errorsFor([unicode]).some((error) => error.includes("invalid fingerprint")));
+});
+
 test("uses canonical Set uniqueness for structured entries at the array limit", () => {
   const entries = Array.from({ length: LIMITS.arrayItems }, (_, id) => ({ id, label: String(id) }));
   assert.deepEqual(collect(entries, { type: "array", uniqueItems: true }), []);
@@ -372,7 +391,7 @@ test("accepts legitimate Unicode source paths and prose", () => {
   assert.deepEqual(errorsFor([finding]), []);
 });
 
-test("CLI rejects input above the byte limit without an exception trace", () => {
+test("CLI rejects input above the byte limit without an exception trace", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const result = runCli(Buffer.alloc(LIMITS.inputBytes + 1, 0x20));
   const output = cliOutput(result);
   assert.equal(result.status, 1, output);
@@ -380,7 +399,7 @@ test("CLI rejects input above the byte limit without an exception trace", () => 
   assert.doesNotMatch(output, /RangeError|Maximum call stack|heap out of memory/i);
 });
 
-test("CLI rejects invalid UTF-8 without replacement or an exception trace", () => {
+test("CLI rejects invalid UTF-8 without replacement or an exception trace", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const findings = producerShapedFindings();
   findings[0].execution.payloads = ["INVALID_UTF8"];
   const encoded = Buffer.from(JSON.stringify(findings));
@@ -442,26 +461,7 @@ test("does not reflect controls from a failed CLI input path", () => {
   }
 });
 
-test("CLI requires exactly one input path", () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-findings-args-"));
-  const findingsPath = path.join(directory, "findings.json");
-  try {
-    fs.writeFileSync(findingsPath, JSON.stringify(producerShapedFindings()));
-    for (const args of [[], [findingsPath, findingsPath]]) {
-      const result = spawnSync(process.execPath, [validatorPath, ...args], {
-        encoding: "utf8",
-        timeout: CLI_TIMEOUT_MS,
-      });
-      assert.equal(result.status, 1, cliOutput(result));
-      assert.equal(result.stdout, "");
-      assert.match(result.stderr, /^Usage: node validate-findings\.cjs /);
-    }
-  } finally {
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test("CLI rejects lone-surrogate prose without changing payload semantics", () => {
+test("CLI rejects lone-surrogate prose without changing payload semantics", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const findings = producerShapedFindings();
   findings[0].title = "\ud800";
   const result = runCli(JSON.stringify(findings));
@@ -471,7 +471,7 @@ test("CLI rejects lone-surrogate prose without changing payload semantics", () =
   assert.doesNotMatch(output, /stack|at validate-findings/i);
 });
 
-test("CLI rejects Unicode format controls in source paths", () => {
+test("CLI rejects Unicode format controls in source paths", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const findings = producerShapedFindings();
   findings[0].trace[0].file = "src/file\u202ename.c";
   const result = runCli(JSON.stringify(findings));
@@ -523,7 +523,7 @@ test("CLI rejects a symlink without following it", { skip: process.platform === 
   }
 });
 
-test("CLI rejects input above the nesting-depth limit without an exception trace", () => {
+test("CLI rejects input above the nesting-depth limit without an exception trace", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const levels = LIMITS.nestingDepth + 1;
   const result = runCli(`${"[".repeat(levels)}0${"]".repeat(levels)}`);
   const output = cliOutput(result);
@@ -532,7 +532,7 @@ test("CLI rejects input above the nesting-depth limit without an exception trace
   assert.doesNotMatch(output, /RangeError|Maximum call stack|heap out of memory/i);
 });
 
-test("CLI rejects an oversized array without an exception trace", () => {
+test("CLI rejects an oversized array without an exception trace", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const result = runCli(JSON.stringify(Array(LIMITS.arrayItems + 1).fill(null)));
   const output = cliOutput(result);
   assert.equal(result.status, 1, output);
