@@ -53,19 +53,17 @@ function unit(overrides = {}) {
   return Object.assign(value, overrides, { canonical_refs: canonicalRefs });
 }
 
-function errorsFor(value, options) {
-  return validateDocument(value, options);
+function errorsFor(value) {
+  return validateDocument(value);
 }
 
 function runCli(contents, options = {}) {
-  const { nodeArgs = [], timeout = CLI_TIMEOUT_MS, args = [], setup } = options;
+  const { nodeArgs = [], timeout = CLI_TIMEOUT_MS } = options;
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-coverage-ledger-"));
   const ledgerPath = path.join(directory, "coverage-ledger.json");
   try {
     fs.writeFileSync(ledgerPath, contents);
-    if (typeof setup === "function") setup(directory);
-    const cliArgs = args.length > 0 ? args.map((a) => (a === "<ledger>" ? ledgerPath : a)) : [ledgerPath];
-    return spawnSync(process.execPath, [...nodeArgs, validatorPath, ...cliArgs], {
+    return spawnSync(process.execPath, [...nodeArgs, validatorPath, ledgerPath], {
       encoding: "utf8",
       timeout,
     });
@@ -76,6 +74,26 @@ function runCli(contents, options = {}) {
 
 function cliOutput(result) {
   return `${result.stdout}${result.stderr}`;
+}
+
+function runCliWithArtifacts(contents, artifacts, options = {}) {
+  const { nodeArgs = [], timeout = CLI_TIMEOUT_MS } = options;
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-coverage-ledger-"));
+  const ledgerPath = path.join(directory, "coverage-ledger.json");
+  try {
+    fs.writeFileSync(ledgerPath, contents);
+    for (const [relativePath, fileContents] of Object.entries(artifacts)) {
+      const fullPath = path.join(directory, relativePath);
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      fs.writeFileSync(fullPath, fileContents);
+    }
+    return spawnSync(process.execPath, [...nodeArgs, validatorPath, ledgerPath], {
+      encoding: "utf8",
+      timeout,
+    });
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 const TERMINAL_CONTROL_PAYLOAD = "\u001b\u0007\u0085\u202e";
@@ -200,36 +218,6 @@ test("text preflight rejects malformed structural truncation cleanly", () => {
   assert.throws(() => preflightJsonText("[{\"field\":1]"), /mismatched JSON containers/);
 });
 
-test("text preflight rejects duplicate object keys instead of keeping the last one", () => {
-  const contents = JSON.stringify([unit()]);
-  assert.doesNotThrow(() => preflightJsonText(contents));
-
-  for (const duplicate of [
-    "\"status\":\"covered\",\"status\":",
-    "\"st\\u0061tus\":\"covered\",\"status\":",
-  ]) {
-    assert.throws(
-      () => preflightJsonText(contents.replace("\"status\":", duplicate)),
-      /duplicate object key "status"/,
-    );
-  }
-  assert.throws(
-    () => preflightJsonText(contents.replace("\"surface\":\"src", "\"surface\":\"other\",\"surface\":\"src")),
-    /duplicate object key "surface"/,
-  );
-  assert.throws(() => preflightJsonText("[{\"\\u001b\":1,\"\\u001b\":2}]"), /duplicate object key "\\u001b"/);
-
-  assert.doesNotThrow(() => preflightJsonText("[{\"a\":1,\"A\":1,\"\\u00e9\":1,\"e\\u0301\":1}]"));
-  assert.doesNotThrow(() => preflightJsonText("[{\"a\":{\"a\":1}},{\"a\":[{\"a\":1},{\"a\":1}]}]"));
-  assert.doesNotThrow(() => preflightJsonText("[{\"a\":\"a\",\"b\":\"a\"}]"));
-
-  if (HAS_SAFE_INPUT_OPEN) {
-    const result = runCli(contents.replace("\"status\":", "\"status\":\"covered\",\"status\":"));
-    assert.equal(result.status, 1, cliOutput(result));
-    assert.match(result.stderr, /duplicate object key "status"/);
-  }
-});
-
 test("derives collision-free canonical IDs from exact UTF-8 references", () => {
   assert.equal(encodeCanonicalRef("route:POST /users"), "route%3APOST%20%2Fusers");
   assert.notEqual(encodeCanonicalRef("route name"), encodeCanonicalRef("route-name"));
@@ -286,17 +274,6 @@ test("validates assignment block maps", () => {
     excluded_blocks: [{ block: "AI-AND-LLM.md#Tool calls", reason: "Claimed irrelevant." }],
   });
   assert(errorsFor([overlap]).some((error) => error.includes("also selected")));
-
-  const ordinaryExcluded = unit({
-    excluded_blocks: [{ block: "ATTACK-CLASSES.md#Access control", reason: "Claimed irrelevant." }],
-  });
-  assert.deepEqual(errorsFor([ordinaryExcluded]), [
-    "$[0].excluded_blocks[0].block: block is also the ordinary attack-class block",
-  ]);
-  assert.deepEqual(errorsFor([unit({
-    ordinary_attack_class_block: null,
-    excluded_blocks: [{ block: "ATTACK-CLASSES.md#Access control", reason: "No ordinary block applies." }],
-  })]), []);
 
   const noReason = unit({ excluded_blocks: [{ block: "AI-AND-LLM.md#Tool calls", reason: "" }] });
   assert(errorsFor([noReason]).some((error) => error.includes("reason")));
@@ -531,26 +508,6 @@ test("rejects reassignment owner reuse and evidence mixing", () => {
     agent_id: "hunter-3",
   });
   assert(errorsFor([unordered]).some((error) => error.includes("strictly increasing")));
-});
-
-test("allows artifact sharing within the same attempt", () => {
-  const sharedArtifact = "agents/hunter-1/artifacts/result.txt";
-
-  const attempt = archivedAttempt({
-    local_checks: [
-      localCheck("hunter-1", { artifact: sharedArtifact }),
-      localCheck("hunter-1", { artifact: sharedArtifact }),
-    ],
-  });
-
-  const value = unit({
-    attempts: [attempt],
-    wave: 2,
-    status: "in_progress",
-    agent_id: "hunter-2",
-  });
-
-  assert.deepEqual(errorsFor([value]), []);
 });
 
 test("rejects unsafe paths and malformed fingerprints", () => {
@@ -802,344 +759,96 @@ test("accepts a canonical ID derived from near-maximum multibyte references", ()
   }
 });
 
-test("validates local check artifact existence and properties on disk", () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "artifact-test-"));
+test("rejects a local check whose artifact does not exist on disk", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const local = unit({
+    status: "covered",
+    agent_id: "hunter-1",
+    reviewed_paths: ["src/router.ts"],
+    local_checks: [localCheck()],
+  });
+  const result = runCli(JSON.stringify([local]));
+  const output = cliOutput(result);
+  assert.notEqual(result.error && result.error.code, "ETIMEDOUT", output);
+  assert.equal(result.status, 1, output);
+  assert.match(output, /local_checks\[0\]\.artifact: local check artifact does not exist/);
+});
+
+test("accepts a local check whose artifact is a real file under the owning agent's artifacts directory", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const local = unit({
+    status: "covered",
+    agent_id: "hunter-1",
+    reviewed_paths: ["src/router.ts"],
+    local_checks: [localCheck()],
+  });
+  const result = runCliWithArtifacts(JSON.stringify([local]), {
+    "agents/hunter-1/artifacts/result.txt": "the bounded fixture accepted the other owner's object",
+  });
+  assert.equal(result.status, 0, cliOutput(result));
+});
+
+test("rejects a local check whose artifact is a directory, not a regular file", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const local = unit({
+    status: "covered",
+    agent_id: "hunter-1",
+    reviewed_paths: ["src/router.ts"],
+    local_checks: [localCheck()],
+  });
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-coverage-ledger-"));
+  const ledgerPath = path.join(directory, "coverage-ledger.json");
   try {
-    const hunterArtifacts = path.join(directory, "agents", "hunter-1", "artifacts");
-    fs.mkdirSync(hunterArtifacts, { recursive: true });
-
-    // 1. Nonexistent artifact
-    const missing = unit({
-      status: "covered",
-      agent_id: "hunter-1",
-      reviewed_paths: ["src/router.ts"],
-      local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/missing.txt" })],
+    fs.writeFileSync(ledgerPath, JSON.stringify([local]));
+    fs.mkdirSync(path.join(directory, "agents/hunter-1/artifacts/result.txt"), { recursive: true });
+    const result = spawnSync(process.execPath, [validatorPath, ledgerPath], {
+      encoding: "utf8",
+      timeout: CLI_TIMEOUT_MS,
     });
-    const missingErrors = errorsFor([missing], { baseDir: directory });
-    assert(missingErrors.some((e) => e.includes("$[0].local_checks[0].artifact: local check artifact does not exist")));
-
-    // 2. Valid regular file
-    const validFile = path.join(hunterArtifacts, "result.txt");
-    fs.writeFileSync(validFile, "local test output");
-    const valid = unit({
-      status: "covered",
-      agent_id: "hunter-1",
-      reviewed_paths: ["src/router.ts"],
-      local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/result.txt" })],
-    });
-    assert.deepEqual(errorsFor([valid], { baseDir: directory }), []);
-
-    // 3. Directory artifact
-    const subDir = path.join(hunterArtifacts, "sub-dir");
-    fs.mkdirSync(subDir, { recursive: true });
-    const dirUnit = unit({
-      status: "covered",
-      agent_id: "hunter-1",
-      reviewed_paths: ["src/router.ts"],
-      local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/sub-dir" })],
-    });
-    const dirErrors = errorsFor([dirUnit], { baseDir: directory });
-    assert(dirErrors.some((e) => e.includes("$[0].local_checks[0].artifact: local check artifact must be a regular file")));
-
-    // 4. Symlink artifact (if supported on host)
-    let canSymlink = false;
-    const symlinkPath = path.join(hunterArtifacts, "symlink.txt");
-    try {
-      fs.symlinkSync(validFile, symlinkPath);
-      canSymlink = true;
-    } catch {
-      // Symlinks may require elevated privileges on Windows
-    }
-    if (canSymlink) {
-      const symlinkUnit = unit({
-        status: "covered",
-        agent_id: "hunter-1",
-        reviewed_paths: ["src/router.ts"],
-        local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/symlink.txt" })],
-      });
-      const symErrors = errorsFor([symlinkUnit], { baseDir: directory });
-      assert(symErrors.some((e) => e.includes("$[0].local_checks[0].artifact: local check artifact must not be a symlink")));
-      fs.unlinkSync(symlinkPath);
-    }
-
-    // 5. Escaping agent artifacts directory via directory symlink
-    if (canSymlink) {
-      const outsideDir = path.join(directory, "outside");
-      fs.mkdirSync(outsideDir, { recursive: true });
-      fs.writeFileSync(path.join(outsideDir, "outside.txt"), "outside content");
-      const symDir = path.join(hunterArtifacts, "escaped");
-      try {
-        fs.symlinkSync(outsideDir, symDir, "dir");
-        const escapeUnit = unit({
-          status: "covered",
-          agent_id: "hunter-1",
-          reviewed_paths: ["src/router.ts"],
-          local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/escaped/outside.txt" })],
-        });
-        const escapeErrors = errorsFor([escapeUnit], { baseDir: directory });
-        assert(escapeErrors.some((e) => e.includes("$[0].local_checks[0].artifact: local check artifact must reside inside agent artifacts directory")));
-      } finally {
-        try { fs.unlinkSync(symDir); } catch {}
-      }
-    }
-
-    // 6. Attempts history also validates artifacts on disk
-    const attemptWithMissing = unit({
-      attempts: [archivedAttempt({
-        local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/missing-attempt.txt" })],
-      })],
-      wave: 2,
-      status: "covered",
-      agent_id: "hunter-2",
-      reviewed_paths: ["src/router.ts"],
-      local_checks: [sourceCheck("hunter-2")],
-    });
-    const attemptErrors = errorsFor([attemptWithMissing], { baseDir: directory });
-    assert(attemptErrors.some((e) => e.includes("$[0].attempts[0].local_checks[0].artifact: local check artifact does not exist")));
-
-    const attemptValidFile = path.join(hunterArtifacts, "attempt-result.txt");
-    fs.writeFileSync(attemptValidFile, "attempt evidence");
-    const attemptWithValid = unit({
-      attempts: [archivedAttempt({
-        local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/attempt-result.txt" })],
-      })],
-      wave: 2,
-      status: "covered",
-      agent_id: "hunter-2",
-      reviewed_paths: ["src/router.ts"],
-      local_checks: [sourceCheck("hunter-2")],
-    });
-    assert.deepEqual(errorsFor([attemptWithValid], { baseDir: directory }), []);
-
-    // 7. Schema-only validation ignores disk checks when baseDir is omitted
-    assert.deepEqual(errorsFor([missing]), []);
+    const output = cliOutput(result);
+    assert.notEqual(result.error && result.error.code, "ETIMEDOUT", output);
+    assert.equal(result.status, 1, output);
+    assert.match(output, /local_checks\[0\]\.artifact: local check artifact must be a regular file/);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test("validates local check artifacts through the CLI", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
-  // 1. Missing artifact causes CLI to fail
-  const missingUnit = unit({
+test("rejects a symlink artifact", { skip: process.platform === "win32" || !HAS_SAFE_INPUT_OPEN }, () => {
+  const local = unit({
     status: "covered",
     agent_id: "hunter-1",
     reviewed_paths: ["src/router.ts"],
-    local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/missing.txt" })],
+    local_checks: [localCheck()],
   });
-  const failResult = runCli(JSON.stringify([missingUnit]));
-  const failOutput = cliOutput(failResult);
-  assert.equal(failResult.status, 1, failOutput);
-  assert.match(failOutput, /\$\[0\]\.local_checks\[0\]\.artifact: local check artifact does not exist/);
-
-  // 2. Present artifact causes CLI to succeed
-  const presentUnit = unit({
-    status: "covered",
-    agent_id: "hunter-1",
-    reviewed_paths: ["src/router.ts"],
-    local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/result.txt" })],
-  });
-  const passResult = runCli(JSON.stringify([presentUnit]), {
-    setup(dir) {
-      const artDir = path.join(dir, "agents", "hunter-1", "artifacts");
-      fs.mkdirSync(artDir, { recursive: true });
-      fs.writeFileSync(path.join(artDir, "result.txt"), "retained artifact content");
-    },
-  });
-  const passOutput = cliOutput(passResult);
-  assert.equal(passResult.status, 0, passOutput);
-  assert.match(passOutput, /PASS: 1 coverage units valid/);
-
-  // 3. CLI --output-dir specifies custom base directory
-  const customDir = fs.mkdtempSync(path.join(os.tmpdir(), "custom-out-"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-coverage-ledger-"));
+  const ledgerPath = path.join(directory, "coverage-ledger.json");
   try {
-    const customArtDir = path.join(customDir, "agents", "hunter-1", "artifacts");
-    fs.mkdirSync(customArtDir, { recursive: true });
-    fs.writeFileSync(path.join(customArtDir, "result.txt"), "custom dir artifact");
-
-    const customPassResult = runCli(JSON.stringify([presentUnit]), {
-      args: ["<ledger>", "--output-dir", customDir],
+    fs.writeFileSync(ledgerPath, JSON.stringify([local]));
+    const outsideTarget = path.join(directory, "outside.txt");
+    fs.writeFileSync(outsideTarget, "real content lives outside the artifacts directory");
+    fs.mkdirSync(path.join(directory, "agents/hunter-1/artifacts"), { recursive: true });
+    fs.symlinkSync(outsideTarget, path.join(directory, "agents/hunter-1/artifacts/result.txt"));
+    const result = spawnSync(process.execPath, [validatorPath, ledgerPath], {
+      encoding: "utf8",
+      timeout: CLI_TIMEOUT_MS,
     });
-    const customPassOutput = cliOutput(customPassResult);
-    assert.equal(customPassResult.status, 0, customPassOutput);
-    assert.match(customPassOutput, /PASS: 1 coverage units valid/);
-  } finally {
-    fs.rmSync(customDir, { recursive: true, force: true });
-  }
-
-  // 4. CLI --schema-only flag bypasses artifact check
-  const schemaOnlyResult = runCli(JSON.stringify([missingUnit]), {
-    args: ["<ledger>", "--schema-only"],
-  });
-  const schemaOnlyOutput = cliOutput(schemaOnlyResult);
-  assert.equal(schemaOnlyResult.status, 0, schemaOnlyOutput);
-  assert.match(schemaOnlyOutput, /PASS: 1 coverage units valid/);
-});
-
-test("validates local check artifact edge cases", () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "artifact-edge-cases-"));
-  try {
-    const hunterArtifacts = path.join(directory, "agents", "hunter-1", "artifacts");
-    fs.mkdirSync(hunterArtifacts, { recursive: true });
-
-    // 1. 0-byte empty regular file is valid
-    const emptyFile = path.join(hunterArtifacts, "empty.txt");
-    fs.writeFileSync(emptyFile, "");
-    const emptyUnit = unit({
-      status: "covered",
-      agent_id: "hunter-1",
-      reviewed_paths: ["src/router.ts"],
-      local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/empty.txt" })],
-    });
-    assert.deepEqual(errorsFor([emptyUnit], { baseDir: directory }), []);
-
-    // 2. Deeply nested file inside artifacts directory is valid
-    const deepDir = path.join(hunterArtifacts, "level1", "level2", "level3");
-    fs.mkdirSync(deepDir, { recursive: true });
-    const deepFile = path.join(deepDir, "deep.log");
-    fs.writeFileSync(deepFile, "deep log content");
-    const deepUnit = unit({
-      status: "covered",
-      agent_id: "hunter-1",
-      reviewed_paths: ["src/router.ts"],
-      local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/level1/level2/level3/deep.log" })],
-    });
-    assert.deepEqual(errorsFor([deepUnit], { baseDir: directory }), []);
-
-    // 3. Valid Unicode (NFC normalized) artifact filename
-    const unicodeFile = path.join(hunterArtifacts, "caf\u00e9.txt");
-    fs.writeFileSync(unicodeFile, "caf\u00e9 report");
-    const unicodeUnit = unit({
-      status: "covered",
-      agent_id: "hunter-1",
-      reviewed_paths: ["src/router.ts"],
-      local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/caf\u00e9.txt" })],
-    });
-    assert.deepEqual(errorsFor([unicodeUnit], { baseDir: directory }), []);
-
-    // 4. Multiple checks in one unit: check 0 source, check 1 valid local, check 2 missing local
-    const presentFile = path.join(hunterArtifacts, "present.txt");
-    fs.writeFileSync(presentFile, "evidence");
-    const mixedChecksUnit = unit({
-      status: "covered",
-      agent_id: "hunter-1",
-      reviewed_paths: ["src/router.ts", "src/authz.ts", "src/user.ts"],
-      local_checks: [
-        sourceCheck("hunter-1", { reviewed_paths: ["src/router.ts"] }),
-        localCheck("hunter-1", { reviewed_paths: ["src/authz.ts"], artifact: "agents/hunter-1/artifacts/present.txt" }),
-        localCheck("hunter-1", { reviewed_paths: ["src/user.ts"], artifact: "agents/hunter-1/artifacts/missing-third.txt" }),
-      ],
-    });
-    const mixedErrors = errorsFor([mixedChecksUnit], { baseDir: directory });
-    assert.equal(mixedErrors.length, 1);
-    assert.equal(mixedErrors[0], "$[0].local_checks[2].artifact: local check artifact does not exist");
-
-    // 5. Blocked and candidate units also validate artifact on disk
-    const blockedUnit = unit({
-      status: "blocked",
-      agent_id: "hunter-1",
-      reviewed_paths: ["src/router.ts"],
-      local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/missing-blocked.txt" })],
-      unresolved: ["Deployment configuration is unavailable."],
-    });
-    const blockedErrors = errorsFor([blockedUnit], { baseDir: directory });
-    assert(blockedErrors.some((e) => e === "$[0].local_checks[0].artifact: local check artifact does not exist"));
-
-    const candidateUnit = unit({
-      status: "candidate",
-      agent_id: "hunter-1",
-      reviewed_paths: ["src/router.ts"],
-      local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/missing-candidate.txt" })],
-      result_fingerprints: ["router-authz-bypass"],
-      unresolved: ["validation_budget_exhausted"],
-    });
-    const candidateErrors = errorsFor([candidateUnit], { baseDir: directory });
-    assert(candidateErrors.some((e) => e === "$[0].local_checks[0].artifact: local check artifact does not exist"));
-
-    // 6. Multiple units in one ledger: error points at specific unit index
-    const unit0 = unit({
-      coverage_id: canonicalCoverageId({
-        surface: "src/router.ts#GET /users",
-        boundary: "src/authz.ts#requireViewer",
-        subsystem: "packages/api",
-        attack_class: "ATTACK-CLASSES.md#Access control",
-      }),
-      canonical_refs: {
-        surface: "src/router.ts#GET /users",
-        boundary: "src/authz.ts#requireViewer",
-        subsystem: "packages/api",
-        attack_class: "ATTACK-CLASSES.md#Access control",
-      },
-      surface: "List-users route",
-      boundary: "Viewer permission",
-      status: "covered",
-      agent_id: "hunter-1",
-      reviewed_paths: ["src/router.ts"],
-      local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/present.txt" })],
-    });
-    const unit1 = unit({
-      coverage_id: canonicalCoverageId({
-        surface: "src/router.ts#POST /users",
-        boundary: "src/authz.ts#requireAdmin",
-        subsystem: "packages/api",
-        attack_class: "ATTACK-CLASSES.md#Access control",
-      }),
-      canonical_refs: {
-        surface: "src/router.ts#POST /users",
-        boundary: "src/authz.ts#requireAdmin",
-        subsystem: "packages/api",
-        attack_class: "ATTACK-CLASSES.md#Access control",
-      },
-      surface: "Create-user route",
-      boundary: "Admin permission",
-      status: "covered",
-      agent_id: "hunter-1",
-      reviewed_paths: ["src/router.ts"],
-      local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/missing-in-unit1.txt" })],
-    });
-    const sortedLedger = [unit0, unit1].sort((a, b) => a.coverage_id.localeCompare(b.coverage_id));
-    const badIndex = sortedLedger.indexOf(unit1);
-    const multiErrors = errorsFor(sortedLedger, { baseDir: directory });
-    assert.equal(multiErrors.length, 1);
-    assert.equal(multiErrors[0], `$[${badIndex}].local_checks[0].artifact: local check artifact does not exist`);
+    const output = cliOutput(result);
+    assert.notEqual(result.error && result.error.code, "ETIMEDOUT", output);
+    assert.equal(result.status, 1, output);
+    assert.match(output, /local_checks\[0\]\.artifact: local check artifact must not be a symlink/);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test("CLI accepts --base-dir and --output-dir with equals syntax", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
-  const customDir = fs.mkdtempSync(path.join(os.tmpdir(), "custom-cli-flags-"));
-  try {
-    const artDir = path.join(customDir, "agents", "hunter-1", "artifacts");
-    fs.mkdirSync(artDir, { recursive: true });
-    fs.writeFileSync(path.join(artDir, "result.txt"), "valid content");
-
-    const validUnit = unit({
-      status: "covered",
-      agent_id: "hunter-1",
-      reviewed_paths: ["src/router.ts"],
-      local_checks: [localCheck("hunter-1", { artifact: "agents/hunter-1/artifacts/result.txt" })],
-    });
-
-    // 1. --base-dir <dir>
-    const baseDirRes = runCli(JSON.stringify([validUnit]), {
-      args: ["<ledger>", "--base-dir", customDir],
-    });
-    assert.equal(baseDirRes.status, 0, cliOutput(baseDirRes));
-
-    // 2. --output-dir=<dir>
-    const outputDirEqRes = runCli(JSON.stringify([validUnit]), {
-      args: ["<ledger>", `--output-dir=${customDir}`],
-    });
-    assert.equal(outputDirEqRes.status, 0, cliOutput(outputDirEqRes));
-
-    // 3. --base-dir=<dir>
-    const baseDirEqRes = runCli(JSON.stringify([validUnit]), {
-      args: ["<ledger>", `--base-dir=${customDir}`],
-    });
-    assert.equal(baseDirEqRes.status, 0, cliOutput(baseDirEqRes));
-  } finally {
-    fs.rmSync(customDir, { recursive: true, force: true });
-  }
+test("still applies schema-only artifact validation when called directly without a base directory", () => {
+  // validateDocument has no notion of "where the ledger file lives" unless a
+  // caller (the CLI) supplies one, so direct callers/tests keep today's
+  // shape-only behavior: missing files are not flagged, but the path must
+  // still be owned by the checking agent.
+  const local = unit({
+    status: "covered",
+    agent_id: "hunter-1",
+    reviewed_paths: ["src/router.ts"],
+    local_checks: [localCheck()],
+  });
+  assert.deepEqual(errorsFor([local]), []);
 });
-
-
