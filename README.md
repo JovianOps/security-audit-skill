@@ -51,15 +51,16 @@ Multiple runs against the same repo are additive. The skill uses prior ledgers a
 Install the skill with the [Skills CLI](https://skills.sh):
 
 ```bash
-npx skills add https://github.com/cloudflare/security-audit-skill \
+npx skills add https://github.com/JovianOps/security-audit-skill \
   --skill security-audit
 ```
 
 Use `--global` for a user-level installation:
 
 ```bash
-npx skills add https://github.com/cloudflare/security-audit-skill \
+npx skills add https://github.com/JovianOps/security-audit-skill \
   --skill security-audit \
+  --skill security-review \
   --global
 ```
 
@@ -100,6 +101,8 @@ The skill activates automatically when the request matches its trigger (security
 ## Contact
 
 Questions, feedback, or comparing notes on AI-driven security tooling: security-ai-research@cloudflare.com
+
+Maintained by: JovianOps (fork of Cloudflare's original work)
 
 ## License
 
