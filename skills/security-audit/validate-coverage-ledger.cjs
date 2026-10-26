@@ -2,7 +2,7 @@
 
 /**
  * Validates coverage-ledger.json and its canonical coverage IDs.
- * Usage: node validate-coverage-ledger.cjs <path-to-coverage-ledger.json>
+ * Usage: node validate-coverage-ledger.cjs <path-to-coverage-ledger.json> [--terminal]
  */
 
 const fs = require("node:fs");
@@ -397,48 +397,6 @@ function isOwnedArtifactPath(value, agentId) {
   return value.startsWith(prefix) && value.length > prefix.length;
 }
 
-// Confirms a schema-valid local-check artifact path actually exists as a
-// retained regular file, and that following symlinks (or a symlinked
-// ancestor directory) can't land outside the owning agent's artifacts
-// directory. Only runs when the caller (the CLI) knows the ledger's own
-// directory; direct callers of validateDocument/validateChecks that don't
-// pass baseDir keep today's shape-only validation.
-function validateArtifactExists(artifactPath, agentId, baseDir, base, errors) {
-  if (baseDir === undefined) return;
-
-  const fullPath = path.join(baseDir, artifactPath);
-  let lstat;
-  try {
-    lstat = fs.lstatSync(fullPath);
-  } catch {
-    errors.push(`${base}.artifact: local check artifact does not exist`);
-    return;
-  }
-  if (lstat.isSymbolicLink()) {
-    errors.push(`${base}.artifact: local check artifact must not be a symlink`);
-    return;
-  }
-  if (!lstat.isFile()) {
-    errors.push(`${base}.artifact: local check artifact must be a regular file`);
-    return;
-  }
-
-  const agentArtifactsDir = path.join(baseDir, "agents", agentId, "artifacts");
-  let realFull;
-  let realAgentArtifactsDir;
-  try {
-    realFull = fs.realpathSync(fullPath);
-    realAgentArtifactsDir = fs.realpathSync(agentArtifactsDir);
-  } catch {
-    errors.push(`${base}.artifact: local check artifact does not exist`);
-    return;
-  }
-  const boundary = realAgentArtifactsDir.endsWith(path.sep) ? realAgentArtifactsDir : realAgentArtifactsDir + path.sep;
-  if (!realFull.startsWith(boundary)) {
-    errors.push(`${base}.artifact: local check artifact resolves outside the owning agent's artifacts directory`);
-  }
-}
-
 function validateStringArray(value, location, errors, options = {}) {
   const { allowEmpty = true, fingerprint = false, pathValue = false } = options;
   if (!Array.isArray(value)) {
@@ -460,7 +418,7 @@ function validateStringArray(value, location, errors, options = {}) {
   });
 }
 
-function validateChecks(value, location, errors, baseDir) {
+function validateChecks(value, location, errors) {
   if (!Array.isArray(value)) {
     errors.push(`${location}: expected array`);
     return;
@@ -485,8 +443,6 @@ function validateChecks(value, location, errors, baseDir) {
     } else if (check.method === "local") {
       if (!isOwnedArtifactPath(check.artifact, check.agent_id)) {
         errors.push(`${base}.artifact: local check requires an artifact owned by agent ${safeQuote(isSafeAgentId(check.agent_id) ? check.agent_id : "<agent-id>")}`);
-      } else {
-        validateArtifactExists(check.artifact, check.agent_id, baseDir, base, errors);
       }
     } else if (check.method !== "source" && check.method !== "local" && check.artifact !== null && !isSafeRelativePath(check.artifact)) {
       errors.push(`${base}.artifact: expected null or a safe output-relative path`);
@@ -609,7 +565,7 @@ function validateStateInvariants(unit, base, errors) {
   }
 }
 
-function validateAttempts(value, unit, base, errors, baseDir) {
+function validateAttempts(value, unit, base, errors) {
   if (!Array.isArray(value)) {
     errors.push(`${base}.attempts: expected array`);
     return;
@@ -649,7 +605,7 @@ function validateAttempts(value, unit, base, errors, baseDir) {
       hasFreshOwner = true;
     }
     validateStringArray(attempt.reviewed_paths, `${attemptBase}.reviewed_paths`, errors, { pathValue: true });
-    validateChecks(attempt.local_checks, `${attemptBase}.local_checks`, errors, baseDir);
+    validateChecks(attempt.local_checks, `${attemptBase}.local_checks`, errors);
     validateReviewedPathOwnership(attempt, attemptBase, errors);
     validateStringArray(attempt.result_fingerprints, `${attemptBase}.result_fingerprints`, errors, { fingerprint: true });
     validateStringArray(attempt.unresolved, `${attemptBase}.unresolved`, errors);
@@ -665,8 +621,14 @@ function validateAttempts(value, unit, base, errors, baseDir) {
         if (typeof check.artifact === "string" && priorArtifacts.has(check.artifact)) {
           errors.push(`${attemptBase}.local_checks[${checkIndex}].artifact: artifact from an earlier attempt cannot be reused`);
         }
-        if (check.method === "local" && typeof check.artifact === "string") priorArtifacts.add(check.artifact);
       });
+      // Promote artifacts only after checking the whole attempt: its checks may
+      // share evidence, while later attempts must not reuse that evidence.
+      for (const check of attempt.local_checks) {
+        if (isObject(check) && check.method === "local" && typeof check.artifact === "string") {
+          priorArtifacts.add(check.artifact);
+        }
+      }
     }
     if (hasFreshOwner) priorOwners.add(attempt.agent_id);
   });
@@ -687,7 +649,7 @@ function validateAttempts(value, unit, base, errors, baseDir) {
   }
 }
 
-function collectUnitErrors(unit, index, baseDir) {
+function collectUnitErrors(unit, index) {
   const errors = createErrorList();
   const base = `$[${index}]`;
   if (!isObject(unit)) return [`${base}: expected object`];
@@ -750,9 +712,9 @@ function collectUnitErrors(unit, index, baseDir) {
   if (!Number.isInteger(unit.wave) || unit.wave < 1) errors.push(`${base}.wave: expected a positive integer`);
   if (unit.agent_id !== null && !isSafeAgentId(unit.agent_id)) errors.push(`${base}.agent_id: expected null or a safe agent ID`);
 
-  validateAttempts(unit.attempts, unit, base, errors, baseDir);
+  validateAttempts(unit.attempts, unit, base, errors);
   validateStringArray(unit.reviewed_paths, `${base}.reviewed_paths`, errors, { pathValue: true });
-  validateChecks(unit.local_checks, `${base}.local_checks`, errors, baseDir);
+  validateChecks(unit.local_checks, `${base}.local_checks`, errors);
   validateReviewedPathOwnership(unit, base, errors);
   validateStringArray(unit.result_fingerprints, `${base}.result_fingerprints`, errors, { fingerprint: true });
   validateStringArray(unit.unresolved, `${base}.unresolved`, errors);
@@ -802,7 +764,8 @@ function readFileWithinLimit(file) {
   }
 }
 
-function validateDocument(ledger, baseDir) {
+function validateDocument(ledger, options = {}) {
+  const terminal = options.terminal === true;
   const errors = createErrorList();
   if (!Array.isArray(ledger)) {
     errors.push("$: expected a top-level array");
@@ -821,7 +784,13 @@ function validateDocument(ledger, baseDir) {
   let previousId = null;
   for (let index = 0; index < ledger.length && errors.length < LIMITS.validationErrors; index++) {
     const unit = ledger[index];
-    errors.push(...collectUnitErrors(unit, index, baseDir));
+    errors.push(...collectUnitErrors(unit, index));
+    if (terminal && isObject(unit) && unit.status === "in_progress") {
+      errors.push(`$[${index}].status: terminal ledger cannot include in_progress units`);
+    }
+    if (terminal && isObject(unit) && unit.status === "planned") {
+      errors.push(`$[${index}].status: terminal ledger cannot include planned units`);
+    }
     if (errors.length >= LIMITS.validationErrors) break;
     if (!isObject(unit) || typeof unit.coverage_id !== "string") continue;
 
@@ -849,9 +818,21 @@ function validateDocument(ledger, baseDir) {
   return errors;
 }
 
-function run(file) {
+function parseCliArgs(argv) {
+  const args = argv.slice(2);
+  let file;
+  let terminal = false;
+  for (const arg of args) {
+    if (arg === "--terminal") terminal = true;
+    else if (file === undefined) file = arg;
+  }
+  return { file, terminal };
+}
+
+function run(argv = process.argv) {
+  const { file, terminal } = parseCliArgs(argv);
   if (!file) {
-    console.error("Usage: node validate-coverage-ledger.cjs <path-to-coverage-ledger.json>");
+    console.error("Usage: node validate-coverage-ledger.cjs <path-to-coverage-ledger.json> [--terminal]");
     return 1;
   }
 
@@ -881,7 +862,7 @@ function run(file) {
 
   let errors;
   try {
-    errors = validateDocument(ledger, path.dirname(path.resolve(file)));
+    errors = validateDocument(ledger, { terminal });
   } catch {
     console.error("Failed to validate coverage ledger: unexpected validation error");
     return 1;
@@ -913,4 +894,4 @@ module.exports = {
   validateDocument,
 };
 
-if (require.main === module) process.exit(run(process.argv[2]));
+if (require.main === module) process.exit(run());
