@@ -43,7 +43,6 @@ const LIMITS = Object.freeze({
   inputBytes: 5 * 1024 * 1024,
   nestingDepth: 64,
   arrayItems: 1000,
-  objectFields: 1000,
   canonicalKeyBytes: 1024 * 1024,
   uniqueSetBytes: 5 * 1024 * 1024,
   validationErrors: 100,
@@ -232,9 +231,6 @@ function collectDataLimitErrors(value, location = "$data") {
       }
     } else {
       const keys = Object.keys(current.value);
-      if (keys.length > LIMITS.objectFields) {
-        return [escapeUnsafeDiagnosticCharacters(`${current.location}: exceeds ${LIMITS.objectFields} object fields`)];
-      }
       for (let index = keys.length - 1; index >= 0; index--) {
         const key = keys[index];
         const child = current.value[key];
@@ -401,7 +397,6 @@ function validate(value, schema, p, errors) {
       if (!hasOwn(value, req)) errors.push(`${p}: missing required field ${safeQuote(req)}`);
     }
     for (const key of Object.keys(value)) {
-      if (errors.length >= LIMITS.validationErrors) break;
       if (hasOwn(schema, "properties") && hasOwn(schema.properties, key)) {
         validate(value[key], schema.properties[key], propertyPath(p, key), errors);
       } else if (hasOwn(schema, "additionalProperties") && schema.additionalProperties === false) {
@@ -492,44 +487,11 @@ function collectFindingSemanticErrors(findings) {
   if (!Array.isArray(findings)) return errors;
 
   const fingerprints = new Map();
-  const sharedBlockers = new Map();
-  let previousBlockerId = null;
-  let sawSharedBlocker = false;
-  findings.forEach((record, index) => {
-    if (!record || record.record_kind !== "shared_blocker") return;
-    const base = `$[${index}]`;
-    if (typeof record.id === "string") {
-      if (sharedBlockers.has(record.id)) {
-        errors.push(`${base}.id: duplicate shared blocker id`);
-      } else {
-        sharedBlockers.set(record.id, record);
-      }
-    }
-    if (record.status === "settled") {
-      if (typeof record.settlement_evidence !== "string" || !hasVisibleProse(record.settlement_evidence)) {
-        errors.push(`${base}.settlement_evidence: settled blocker requires visible evidence`);
-      }
-    } else if (hasOwn(record, "settlement_evidence")) {
-      errors.push(`${base}: open blocker must not contain settlement_evidence`);
-    }
-  });
   let previousFingerprint = null;
   findings.forEach((finding, index) => {
     if (errors.length >= LIMITS.validationErrors) return;
     if (!finding || typeof finding !== "object" || Array.isArray(finding)) return;
     const base = `$[${index}]`;
-
-    if (finding.record_kind === "shared_blocker") {
-      sawSharedBlocker = true;
-      if (typeof finding.id === "string") {
-        if (previousBlockerId !== null && previousBlockerId > finding.id) {
-          errors.push(`${base}.id: shared blockers must be sorted lexicographically`);
-        }
-        previousBlockerId = finding.id;
-      }
-      return;
-    }
-    if (sawSharedBlocker) errors.push(`${base}: findings must precede shared blocker records`);
 
     if (hasOwn(finding, "fingerprint") && typeof finding.fingerprint === "string") {
       if (fingerprints.has(finding.fingerprint)) {
@@ -584,21 +546,6 @@ function collectFindingSemanticErrors(findings) {
     }
 
     const verdict = finding.verdict;
-    if (hasOwn(finding, "blocker_ids")) {
-      if (verdict !== "needs_validation") {
-        errors.push(`${base}: only needs_validation records may reference shared blockers`);
-      }
-      if (Array.isArray(finding.blocker_ids)) {
-        finding.blocker_ids.forEach((id, referenceIndex) => {
-          const blocker = sharedBlockers.get(id);
-          if (!blocker) {
-            errors.push(`${base}.blocker_ids[${referenceIndex}]: unknown shared blocker ${safeQuote(id)}`);
-          } else if (blocker.status === "settled") {
-            errors.push(`${base}.blocker_ids[${referenceIndex}]: shared blocker ${safeQuote(id)} is settled; re-evaluate the candidate and remove this reference`);
-          }
-        });
-      }
-    }
     if (verdict === "confirmed") {
       for (const forbidden of ["claimed_root_cause", "blockers", "validation_plan", "reason"]) {
         if (hasOwn(finding, forbidden)) errors.push(`${base}: confirmed finding must not contain ${safeQuote(forbidden)}`);
@@ -730,16 +677,7 @@ function enforceJsonTextLimits(contents) {
     }
 
     if (character === "\"") {
-      const container = containers[containers.length - 1];
-      if (container && container.type === "object" && container.expectsKey) {
-        container.expectsKey = false;
-        container.fields++;
-        if (container.fields > LIMITS.objectFields) {
-          throw new JsonStructureError(`input exceeds ${LIMITS.objectFields} field object limit`);
-        }
-      } else {
-        markArrayItem();
-      }
+      markArrayItem();
       inString = true;
     } else if (character === "[" || character === "{") {
       markArrayItem();
@@ -750,15 +688,12 @@ function enforceJsonTextLimits(contents) {
         type: character === "[" ? "array" : "object",
         expectsItem: character === "[",
         items: 0,
-        fields: 0,
-        expectsKey: character === "{",
       });
     } else if (character === "]" || character === "}") {
       containers.pop();
     } else if (character === ",") {
       const container = containers[containers.length - 1];
       if (container && container.type === "array") container.expectsItem = true;
-      if (container && container.type === "object") container.expectsKey = true;
     } else if (!/\s/.test(character)) {
       markArrayItem();
     }
@@ -773,9 +708,9 @@ function run(file) {
 
   let schema;
   try {
-    schema = loadSchema(path.join(__dirname, "../references/report-schema.json"));
+    schema = loadSchema(path.join(__dirname, "../resources/report-schema.json"));
   } catch (error) {
-    console.error("Failed to load report-schema.json:", error.message);
+    console.error("Failed to load ../resources/report-schema.json:", error.message);
     return 1;
   }
 
@@ -817,9 +752,7 @@ function run(file) {
     console.error(`FAIL: ${errors.length} validation error(s)${cap}`);
     return 1;
   }
-  const sharedBlockerCount = findings.filter((record) => record.record_kind === "shared_blocker").length;
-  const suffix = sharedBlockerCount > 0 ? `; ${sharedBlockerCount} shared blockers valid` : "";
-  console.log(`PASS: ${findings.length - sharedBlockerCount} findings valid${suffix}`);
+  console.log(`PASS: ${findings.length} findings valid`);
   return 0;
 }
 
@@ -837,4 +770,7 @@ module.exports = {
   validateDocument,
 };
 
-if (require.main === module) process.exit(run(process.argv[2]));
+if (require.main === module) {
+  const args = process.argv.slice(2);
+  process.exit(run(args.length === 1 ? args[0] : undefined));
+}

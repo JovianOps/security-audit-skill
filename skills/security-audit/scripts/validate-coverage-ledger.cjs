@@ -612,7 +612,6 @@ function validateAttempts(value, unit, base, errors) {
     if (!isVisibleText(attempt.reassignment_reason)) errors.push(`${attemptBase}.reassignment_reason: invalid text`);
     validateStateInvariants(attempt, attemptBase, errors);
 
-    const attemptArtifacts = new Set();
     if (Array.isArray(attempt.local_checks)) {
       attempt.local_checks.forEach((check, checkIndex) => {
         if (!isObject(check)) return;
@@ -622,10 +621,9 @@ function validateAttempts(value, unit, base, errors) {
         if (typeof check.artifact === "string" && priorArtifacts.has(check.artifact)) {
           errors.push(`${attemptBase}.local_checks[${checkIndex}].artifact: artifact from an earlier attempt cannot be reused`);
         }
-        if (check.method === "local" && typeof check.artifact === "string") attemptArtifacts.add(check.artifact);
+        if (check.method === "local" && typeof check.artifact === "string") priorArtifacts.add(check.artifact);
       });
     }
-    for (const artifact of attemptArtifacts) priorArtifacts.add(artifact);
     if (hasFreshOwner) priorOwners.add(attempt.agent_id);
   });
 
@@ -871,4 +869,7 @@ module.exports = {
   validateDocument,
 };
 
-if (require.main === module) process.exit(run(process.argv[2]));
+if (require.main === module) {
+  const args = process.argv.slice(2);
+  process.exit(run(args.length === 1 ? args[0] : undefined));
+}
