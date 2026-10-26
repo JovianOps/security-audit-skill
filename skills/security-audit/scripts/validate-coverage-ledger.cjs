@@ -2,7 +2,7 @@
 
 /**
  * Validates coverage-ledger.json and its canonical coverage IDs.
- * Usage: node validate-coverage-ledger.cjs <path-to-coverage-ledger.json>
+ * Usage: node validate-coverage-ledger.cjs <path-to-coverage-ledger.json> [--terminal]
  */
 
 const fs = require("node:fs");
@@ -612,6 +612,7 @@ function validateAttempts(value, unit, base, errors) {
     if (!isVisibleText(attempt.reassignment_reason)) errors.push(`${attemptBase}.reassignment_reason: invalid text`);
     validateStateInvariants(attempt, attemptBase, errors);
 
+    const attemptArtifacts = new Set();
     if (Array.isArray(attempt.local_checks)) {
       attempt.local_checks.forEach((check, checkIndex) => {
         if (!isObject(check)) return;
@@ -621,9 +622,10 @@ function validateAttempts(value, unit, base, errors) {
         if (typeof check.artifact === "string" && priorArtifacts.has(check.artifact)) {
           errors.push(`${attemptBase}.local_checks[${checkIndex}].artifact: artifact from an earlier attempt cannot be reused`);
         }
-        if (check.method === "local" && typeof check.artifact === "string") priorArtifacts.add(check.artifact);
+        if (check.method === "local" && typeof check.artifact === "string") attemptArtifacts.add(check.artifact);
       });
     }
+    for (const artifact of attemptArtifacts) priorArtifacts.add(artifact);
     if (hasFreshOwner) priorOwners.add(attempt.agent_id);
   });
 
@@ -758,7 +760,8 @@ function readFileWithinLimit(file) {
   }
 }
 
-function validateDocument(ledger) {
+function validateDocument(ledger, options = {}) {
+  const terminal = options.terminal === true;
   const errors = createErrorList();
   if (!Array.isArray(ledger)) {
     errors.push("$: expected a top-level array");
@@ -778,6 +781,12 @@ function validateDocument(ledger) {
   for (let index = 0; index < ledger.length && errors.length < LIMITS.validationErrors; index++) {
     const unit = ledger[index];
     errors.push(...collectUnitErrors(unit, index));
+    if (terminal && isObject(unit) && unit.status === "in_progress") {
+      errors.push(`$[${index}].status: terminal ledger cannot include in_progress units`);
+    }
+    if (terminal && isObject(unit) && unit.status === "planned") {
+      errors.push(`$[${index}].status: terminal ledger cannot include planned units`);
+    }
     if (errors.length >= LIMITS.validationErrors) break;
     if (!isObject(unit) || typeof unit.coverage_id !== "string") continue;
 
@@ -805,9 +814,21 @@ function validateDocument(ledger) {
   return errors;
 }
 
-function run(file) {
+function parseCliArgs(argv) {
+  const args = argv.slice(2);
+  let file;
+  let terminal = false;
+  for (const arg of args) {
+    if (arg === "--terminal") terminal = true;
+    else if (file === undefined) file = arg;
+  }
+  return { file, terminal };
+}
+
+function run(argv = process.argv) {
+  const { file, terminal } = parseCliArgs(argv);
   if (!file) {
-    console.error("Usage: node validate-coverage-ledger.cjs <path-to-coverage-ledger.json>");
+    console.error("Usage: node validate-coverage-ledger.cjs <path-to-coverage-ledger.json> [--terminal]");
     return 1;
   }
 
@@ -837,7 +858,7 @@ function run(file) {
 
   let errors;
   try {
-    errors = validateDocument(ledger);
+    errors = validateDocument(ledger, { terminal });
   } catch {
     console.error("Failed to validate coverage ledger: unexpected validation error");
     return 1;
@@ -869,7 +890,4 @@ module.exports = {
   validateDocument,
 };
 
-if (require.main === module) {
-  const args = process.argv.slice(2);
-  process.exit(run(args.length === 1 ? args[0] : undefined));
-}
+if (require.main === module) process.exit(run());

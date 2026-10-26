@@ -4,7 +4,7 @@
 
 After the clean coverage-critic pass or an explicitly recorded early stop, consolidate Phase 2 candidates, carried same-source prior confirmations, and carried still-blocked prior `needs_validation` records by stable fingerprint and root cause. Give every unique proposed `confirmed` and `needs_validation` candidate to a fresh `general` verifier that did not hunt it. A carried prior confirmation follows the same current verification path even though hunters exclude that unchanged root cause. A verifier may read hunter or prior artifacts but must re-read every cited current source location and independently run any decisive check it can reproduce safely.
 
-Assign each verifier a canonical lowercase unique ID and `<output-dir>/agents/<verifier-id>/scratch/` plus parent-owned `artifacts/`. The verifier writes only to `scratch/` and never writes retained artifacts. It receives only the candidate, its linked coverage-unit checks and artifact paths, architecture facts needed to interpret the path, exact relevant companion validation blocks, the promotion procedure block below, the source/local execution boundary, the `confirmed`, `needs_validation`, and `rejected` branches of `../resources/report-schema.json` copied verbatim, and prior records with the same fingerprint. It must not receive another verifier's conclusion.
+Assign each verifier a canonical lowercase unique ID and `<output-dir>/agents/<verifier-id>/scratch/` plus parent-owned `artifacts/`. The verifier writes only to `scratch/` and never writes retained artifacts. It receives only the candidate, its linked coverage-unit checks and artifact paths, architecture facts needed to interpret the path, exact relevant companion validation blocks, the promotion procedure block below, the source/local execution boundary, the `confirmed`, `needs_validation`, and `rejected` branches of `report-schema.json` copied verbatim, and prior records with the same fingerprint. It must not receive another verifier's conclusion.
 
 #### Candidate-verifier prompt
 
@@ -32,8 +32,7 @@ unavailable or fails, do not use that file as evidence.
    result when possible. Verify inputs, interface shape, conditions, and affected
    dummy principal/resource. Do not infer a stronger result or continue after it.
 4. Verify that likelihood, impact, confidence, and the proposed source fix match only
-   what the evidence establishes, and that `remediation.preserved_uses` names the
-   legitimate users of every path the fix refuses.
+   what the evidence establishes.
 5. For a proposed needs_validation candidate, decide whether the blocker is genuinely
    outside source/local observation. If source refutes the trace, reject it. If the
    missing fact remains decisive, keep needs_validation and make the local and
@@ -85,7 +84,7 @@ file separately:
     promotion blocker.
 ```
 
-A verifier can promote `needs_validation` to `confirmed` only after independently establishing the complete path and bounded observed result. Demote proposed confirmation to `needs_validation` when a specific deployment or runtime fact remains unknown. Use `rejected` when source, local behavior, a visible control, missing meaningful impact, or an impossible prerequisite refutes the claim. A prerequisite that is only non-default or absent from the checked-in configuration is not impossible; keep it `needs_validation` with that configuration fact as the blocker. `needs_validation` is never a parking place for a speculative idea.
+A verifier can promote `needs_validation` to `confirmed` only after independently establishing the complete path and bounded observed result. Demote proposed confirmation to `needs_validation` when a specific deployment or runtime fact remains unknown. Use `rejected` when source, local behavior, a visible control, missing meaningful impact, or an impossible prerequisite refutes the claim. `needs_validation` is never a parking place for a speculative idea.
 
 The parent checks that each verifier returned the same fingerprint unless it identified a genuinely different root cause. Merge corrections, record the decision in every linked coverage unit, and ensure there is one final record per fingerprint. Discard a malformed or prose-wrapped verifier result without repairing it; re-run that candidate with a fresh verifier when the budget permits, otherwise it remains an unvalidated ledger candidate under the incomplete-run rule.
 
@@ -95,71 +94,32 @@ If a strict total-agent budget cannot cover every candidate, set the run status 
 
 ### Phase 4: Write and validate `findings.json`
 
-The parent writes all independently decided findings to `<output-dir>/findings.json`, sorted by fingerprint, followed by any shared blocker records sorted by id. Include:
+The parent writes all independently decided records to `<output-dir>/findings.json`, sorted by fingerprint. Include:
 
 - `confirmed`: source-grounded vulnerabilities with complete local execution evidence, conditions, specific remediation, likelihood/impact/overall severity, and confidence.
 - `needs_validation`: source-grounded candidates with an exact unresolved blocker and at least one applicable local or owner-observed deployment plan.
 - `rejected`: source-grounded candidates disproved during validation, retained so future runs do not repeat the unsupported claim without changed evidence.
 
-Read `../resources/report-schema.json` immediately before writing. It uses `additionalProperties: false`; do not carry hunter wrapper fields into a record. Keep these verdict contracts distinct:
+Read `report-schema.json` immediately before writing. It uses `additionalProperties: false`; do not carry hunter wrapper fields into a record. Keep these verdict contracts distinct:
 
-- A `confirmed` record uses `root_cause`, `intended_behavior`, `conditions`, `execution`, `remediation`, `severity`, and `confidence`. `intended_behavior` says what the path is for as well as what it must prevent. It must not use `claimed_root_cause`, `blockers`, `validation_plan`, or `reason`. `execution` is target-neutral and uses the target's native interface: API/HTTP input, CLI call, library call, message, file fixture, browser action, rendered policy, or local harness as applicable. `observed_result` is nonempty and factual.
+- A `confirmed` record uses `root_cause`, `intended_behavior`, `conditions`, `execution`, `remediation`, `severity`, and `confidence`. It must not use `claimed_root_cause`, `blockers`, `validation_plan`, or `reason`. `execution` is target-neutral and uses the target's native interface: API/HTTP input, CLI call, library call, message, file fixture, browser action, rendered policy, or local harness as applicable. `observed_result` is nonempty and factual.
 - A `needs_validation` record uses `claimed_root_cause`, `trace`, `evidence`, `blockers`, and at least one nonempty `validation_plan.local` or `validation_plan.deployment` field. Include both only when both contexts can resolve distinct facts. It must not use severity, execution, remediation, reason, or confirmed root cause.
 - A `rejected` record uses `claimed_root_cause`, `trace`, `evidence`, and `reason`. It must not use severity, execution, remediation, blockers, validation plan, or confirmed root cause.
-
-#### Shared deployment facts
-
-When multiple candidates depend on the same external fact, declare it once as a
-`shared_blocker` record in the same array. It is bookkeeping, not a finding, and
-has no verdict, fingerprint, severity, or vulnerability count. Use a stable `id`,
-an exact `description`, an `owner_observed_check` describing the safe, bounded,
-read-only observation that can settle the fact, and `status: "open"`.
-
-```json
-{
-  "record_kind": "shared_blocker",
-  "id": "database-runtime-rls",
-  "description": "Whether row-level security binds the deployed runtime role is unknown.",
-  "owner_observed_check": "The owner reads the runtime role and applicable RLS configuration in the approved deployment, without executing attacker input.",
-  "status": "open"
-}
-```
-
-A `needs_validation` finding may add `blocker_ids: ["database-runtime-rls"]`.
-Keep its required free-text `blockers` and `validation_plan` for candidate-specific
-limitations and next steps; these do not replace the shared record or its check.
-Existing findings arrays without shared blockers remain valid. Do not reference
-shared blockers from confirmed or rejected findings.
-
-After an owner actually observes the fact, set `status: "settled"` and add visible
-`settlement_evidence` recording the observation and its provenance. A settled fact
-is not proof of a vulnerability. The validator rejects every remaining reference
-to that settled id, identifying all dependent candidates without text matching.
-Re-evaluate each candidate under Phases 3–5, remove the settled `blocker_ids`
-reference and any corresponding obsolete free-text blocker, and keep only genuine
-remaining blockers. Omit `blocker_ids` when empty. If no blockers remain, obtain
-the decisive independent validation and classify the record as confirmed or
-rejected; never promote it automatically from the deployment fact alone. Keep
-the settled shared record and its evidence for provenance, then regenerate reports
-and update affected ledger units. An open record must not contain settlement evidence.
-
-Phase 5 checks these shared facts and the consistency of their dependent records
-as well as the findings. A stale settled reference prevents final publication.
 
 Every record has a stable fingerprint, title, description, and repository-relative source paths. A multi-step trace begins with `entrypoint`, ends with `sink`, and uses `propagation` only between them. One-entry traces use `entrypoint` or `sink`. Overall severity cannot exceed demonstrated impact.
 
 Run:
 
 ```sh
-node <skill-dir>/scripts/validate-findings.cjs <output-dir>/findings.json
-node <skill-dir>/scripts/validate-coverage-ledger.cjs <output-dir>/coverage-ledger.json
+node <skill-dir>/validate-findings.cjs <output-dir>/findings.json
+node <skill-dir>/validate-coverage-ledger.cjs <output-dir>/coverage-ledger.json
 ```
 
 Fix every structural and semantic error before continuing. The findings validator rejects input beyond 5 MiB, 1,000 top-level findings, or 64 nesting levels, and caps reported error output at 100 messages. Validator success proves format and ledger consistency only.
 
 ### Phase 5: Verify the final records with fresh eyes
 
-Launch one fresh `research` verifier per final `confirmed` and `needs_validation` record. When the platform supports parallel delegates, these can run in parallel; when it destabilizes or kills parallel sub-agents, run the same verifier tasks sequentially in fresh agents with the same prompts and evidence boundaries. This verifier checks the structured record, not the hunter write-up, and remains inside source/local boundaries.
+Launch one fresh `research` verifier per final `confirmed` and `needs_validation` record, in parallel. This verifier checks the structured record, not the hunter write-up, and remains inside source/local boundaries.
 
 In a `quick` run, Phase 3 and Phase 5 merge: the Phase 3 verifier also performs these record checks and returns the final schema-shaped record, so each candidate gets one fresh independent reviewer instead of two. Every other profile keeps the two passes separate. Never skip independent review of a `confirmed` record in any profile.
 
@@ -196,13 +156,13 @@ Only after Phase 5 passes for every `confirmed` and `needs_validation` record re
 
 Write:
 
-1. Run profile, scope, budget (if set) with agents spent versus planned, source ref, sandboxed source-and-local-only execution statement, prior-run use, and explicit deferred and out-of-scope coverage. Name carried same-source confirmations and changed-source revalidations. A `quick`, scoped, budget-limited, or incomplete run states plainly that it is a partial pass. If candidate validation exhausted a strict budget, state that the run is incomplete and list every unvalidated fingerprint and linked unit; do not describe those candidates as findings. If the budget prevented a mandatory critic, state which critic did not run and make no clean-coverage claim. If any unit was deferred with `malformed_hunter_return`, name those coverage IDs; do not describe them as covered or as critic-found gaps.
+1. Run profile, scope, budget (if set) with agents spent versus planned, source ref, sandboxed source-and-local-only execution statement, prior-run use, and explicit deferred and out-of-scope coverage. Name carried same-source confirmations and changed-source revalidations. A `quick`, scoped, budget-limited, or incomplete run states plainly that it is a partial pass. If candidate validation exhausted a strict budget, state that the run is incomplete and list every unvalidated fingerprint and linked unit; do not describe those candidates as findings. If the budget prevented a mandatory critic, state which critic did not run and make no clean-coverage claim.
 2. One short security posture summary.
 3. A confirmed-findings table: severity, title, affected boundary, and one-line observed result.
 4. Each confirmed finding: repository source location, lower-trust principal, target-native bounded reproduction, conditions, actual result, impact, priority rationale, and smallest source fix.
-5. A separate `NEEDS VALIDATION` table. Give each lead's title, repository trace, exact blocker, bounded local next step, and safe owner-observed deployment check. Include its shared blocker ids, resolving their facts from the structured records. Do not assign severity or call it a confirmed vulnerability. When shared blockers exist, render a separate table with id, exact fact, status, owner-observed check, settlement evidence (if settled), and dependent fingerprints. Rank open facts by descending count of distinct referring needs_validation findings, breaking ties lexicographically by id; list settled facts separately for provenance. This count measures candidates awaiting a fact, not guaranteed vulnerabilities or automatic promotions. Exclude shared blocker records from all finding/verdict counts.
+5. A separate `NEEDS VALIDATION` table. Give each lead's title, repository trace, exact blocker, bounded local next step, and safe owner-observed deployment check. Do not assign severity or call it a confirmed vulnerability.
 6. Separate hardening notes and positive source patterns.
-7. Coverage summary from the ledger: covered, candidate, blocked, and deferred counts, plus important exclusions and the final critic result. Break out `malformed_hunter_return` deferrals from `quick_profile_final_critic` and budget deferrals.
+7. Coverage summary from the ledger: covered, candidate, blocked, and deferred counts, plus important exclusions and the final critic result.
 
 Do not describe rejected records as findings. Mention their fingerprints only when they explain a prior disagreement or coverage decision.
 
@@ -220,11 +180,6 @@ For each confirmed `medium`, `high`, or `critical` record, copy the complete sou
 #### `NEEDS-VALIDATION.md`
 
 For every unresolved record, copy the source trace, verified evidence, exact blocker, affected boundary, and each applicable bounded local or owner-observed resolution plan. Keep these as prioritized leads without severity. Do not turn them into live test guidance or assume the missing deployment fact.
-
-Render the same ranked shared-blocker table here when present. Each lead names its
-`blocker_ids` and links to that table instead of duplicating shared fact text.
-The table and lead references come only from the validated final array; do not
-maintain a separate handwritten deployment-facts list.
 
 HTTP is one possible native interface, not the default. A library finding may use a function call, a parser a fixture, a CLI a command, a desktop app an IPC or file action, and infrastructure a locally rendered policy. Do not require an endpoint, external account, or live environment that the target does not have.
 

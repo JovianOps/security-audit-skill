@@ -17,18 +17,9 @@ The skill runs a structured audit in six phases:
 
 The parent runs `validate-coverage-ledger.cjs` after creating the ledger and after each later ledger update. It runs `validate-findings.cjs` in Phase 4 and again after every Phase 5 replacement.
 
-Once Phase 3 has moved validated units to `candidate`, run `validate-cross-consistency.cjs` to prove the pairing between the two files: every record in `findings.json` must trace by fingerprint to a `candidate` ledger unit that actually validated it. Run it while the ledger still holds the candidate fingerprints (before Phase 5 final dispositions clear them); an orphan fingerprint means the report claims a record no coverage unit ever produced.
-
 The verdicts are distinct: `confirmed` has a complete source trace and bounded observed result, `needs_validation` has an exact unresolved fact and no severity, and `rejected` records a disproved candidate.
 
 Multiple runs against the same repo are additive. The skill uses prior ledgers and findings to target gaps, revalidate changed source, and carry forward current-source evidence without treating stale or unresolved work as covered.
-
-## Coverage boundaries
-
-The skill audits source and locally available evidence; it does not query live advisory or CVE databases. Findings that depend on information outside the audit sandbox—such as vulnerabilities disclosed after the model's knowledge cutoff—remain `needs_validation` unless the relevant advisory data is supplied as local evidence. Pair this skill with a current dependency or advisory scanner when live CVE coverage is required.
-
-Its coverage ledger is security-focused rather than a guarantee of general program correctness. Domain-specific defects that do not map to a security boundary or attack class may not become hunting units. Use domain tests and specialist review alongside the audit when correctness beyond security is in scope.
-
 
 ## Files
 
@@ -41,7 +32,6 @@ Its coverage ledger is security-focused rather than a guarantee of general progr
 | `MEMORY-SAFETY-AND-BINARY.md` | Memory-safety, binary, and kernel hunting classes for native targets |
 | `AI-AND-LLM.md` | Prompt-injection, agent/tool, and output-handling hunting classes for LLM-backed targets |
 | `WEB-PROTOCOL-AND-AUTH.md` | HTTP request-framing, cache, and authentication-protocol hunting classes for HTTP-protocol and auth targets |
-| `CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md` | Cryptographic primitives, randomness, nonce/IV handling, JWT verification, password hashing, TLS, and key-lifecycle hunting classes |
 | `CLIENT-SIDE.md` | DOM-injection, messaging-trust, UI-redress, and prototype-pollution hunting classes for client-side/browser targets |
 | `SUPPLY-CHAIN-AND-RELEASE.md` | Dependency, CI, release, signing, update, plugin, and extension hunting classes |
 | `CLOUD-AND-DEPLOYMENT.md` | IAM, infrastructure-as-code, container, serverless, ingress, and runtime-configuration hunting classes |
@@ -55,8 +45,6 @@ Its coverage ledger is security-focused rather than a guarantee of general progr
 | `validate-findings.test.cjs` | Findings-validator tests and producer-compatible fixture checks |
 | `validate-coverage-ledger.cjs` | Zero-dependency validator for `coverage-ledger.json` in Phases 1–5 |
 | `validate-coverage-ledger.test.cjs` | Coverage-ledger validator tests |
-| `validate-cross-consistency.cjs` | Zero-dependency cross-validator: findings fingerprints must trace to validated ledger candidates |
-| `validate-cross-consistency.test.cjs` | Cross-validator tests |
 
 ## Installation
 
@@ -98,7 +86,7 @@ The skill activates automatically when the request matches its trigger (security
 ## Requirements
 
 - A coding agent with a model that supports tool use and parallel sub-agents
-- Node.js for the zero-dependency findings and coverage-ledger validators
+- Node.js for the zero-dependency findings and coverage-ledger validators. On POSIX they open input with `O_NOFOLLOW | O_NONBLOCK`; on Windows, which has neither flag, they refuse links, junctions, devices, and pipes by `lstat` and require the opened file to keep the same volume and file ID. Other platforms without the flags reject all input. Run their tests with `node --test "skills/security-audit/*.test.cjs"`; CI runs them on Linux, macOS, and Windows.
 - An OS-enforced sandbox for target-controlled builds, tests, processes, browsers, emulators, fuzzers, and fixtures. It must disable external networking, use a sanitized allowlisted environment, enforce resource limits, and allow writes only to assigned scratch paths. Without these controls, the workflow keeps the lead as `needs_validation` instead of executing target code.
 
 ## Design principles
@@ -108,11 +96,6 @@ The skill activates automatically when the request matches its trigger (security
 - **Severity requires impact.** Likelihood x impact, not deviation from a checklist.
 - **Defense-in-depth gaps are not vulnerabilities.** If Layer A prevents the attack, the absence of Layer B is a hardening note.
 - **Multiple runs improve coverage.** In our test runs, a single run found roughly half of the vulnerabilities that repeated runs found in total.
-
-## Scope and limits
-
-- **Known vulnerabilities in pinned dependencies are out of scope.** Nothing in the workflow fetches advisory or CVE data, and hunters run without external networking, so a disclosed vulnerability in a dependency version that postdates the model's knowledge will not be found. A known-vulnerable dependency is also not a finding by itself: it needs a demonstrated resolution, build, or execution boundary. Run a dependency scanner alongside this skill if that coverage matters.
-- **Facts the audit cannot observe stay open.** A lead that depends on an external or deployment fact is recorded as `needs_validation` with that fact named, not guessed at.
 
 ## Contact
 
