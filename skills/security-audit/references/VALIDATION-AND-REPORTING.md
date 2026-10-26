@@ -2,7 +2,7 @@
 
 ### Phase 3: Independently validate every candidate
 
-After the clean coverage-critic pass or an explicitly recorded early stop, consolidate Phase 2 candidates, carried same-source prior confirmations, and carried still-blocked prior `needs_validation` records by stable fingerprint and root cause. Give every unique proposed `confirmed` and `needs_validation` candidate to a fresh `general` verifier that did not hunt it. A carried prior confirmation follows the same current verification path even though hunters exclude that unchanged root cause. A verifier may read hunter or prior artifacts but must re-read every cited current source location and independently run any decisive check it can reproduce safely.
+After the clean coverage-critic pass or an explicitly recorded early stop, consolidate Phase 2 candidates and carried same-source prior confirmations by stable fingerprint and root cause. Give every unique proposed `confirmed` and `needs_validation` candidate to a fresh `general` verifier that did not hunt it. A carried prior confirmation follows the same current verification path even though hunters exclude that unchanged root cause. A verifier may read hunter or prior artifacts but must re-read every cited current source location and independently run any decisive check it can reproduce safely.
 
 Assign each verifier a canonical lowercase unique ID and `<output-dir>/agents/<verifier-id>/scratch/` plus parent-owned `artifacts/`. The verifier writes only to `scratch/` and never writes retained artifacts. It receives only the candidate, its linked coverage-unit checks and artifact paths, architecture facts needed to interpret the path, exact relevant companion validation blocks, the promotion procedure block below, the source/local execution boundary, the `confirmed`, `needs_validation`, and `rejected` branches of `report-schema.json` copied verbatim, and prior records with the same fingerprint. It must not receive another verifier's conclusion.
 
@@ -112,11 +112,10 @@ Run:
 
 ```sh
 node <skill-dir>/validate-findings.cjs <output-dir>/findings.json
-node <skill-dir>/validate-coverage-ledger.cjs <output-dir>/coverage-ledger.json
-node <skill-dir>/validate-run-metadata.cjs <output-dir>/run-metadata.json
+node <skill-dir>/validate-coverage-ledger.cjs <output-dir>/coverage-ledger.json --terminal
 ```
 
-Fix every structural and semantic error before continuing. The findings validator rejects input beyond 5 MiB, 1,000 top-level findings, or 64 nesting levels, and caps reported error output at 100 messages. `validate-run-metadata.cjs` requires the documented fields, accepts only `run_status` values `in_progress`, `complete`, and `incomplete`, and requires `incomplete_reason` to be one of `budget_cannot_fund_reconnaissance_and_reserves`, `critic_budget_exhausted`, or `validation_budget_exhausted` when the run is incomplete. A `complete` claim also requires sibling `coverage-ledger.json` and fails when any `candidate` fingerprint is absent from `findings.json`. Validator success proves format, ledger consistency, and run-state consistency only.
+Fix every structural and semantic error before continuing. The findings validator rejects input beyond 5 MiB, 1,000 top-level findings, or 64 nesting levels, and caps reported error output at 100 messages. Phase 4 and later ledger checks that underwrite a complete run must pass `--terminal`, which rejects remaining `in_progress` and `planned` units. Mid-run ledger updates omit `--terminal` so a live assignment can still validate. Validator success proves format and ledger consistency only.
 
 ### Phase 5: Verify the final records with fresh eyes
 
@@ -145,17 +144,13 @@ Each verifier returns exactly one JSON object: `{"decision":"verified","fingerpr
 
 Do not apply a Phase 5 replacement as final when it promotes a record to a stronger verdict, including any promotion to `confirmed`, or materially changes the root cause, trace, execution input or observed result, demonstrated impact, or severity. Give that complete replacement to a new independent verifier that did not hunt, perform Phase 3 validation, or propose the Phase 5 replacement. The new verifier rechecks the current source and independently reproduces any decisive local result under the execution boundary, then returns `verified` or another replacement. Apply a material replacement only after this fresh verification. If another material replacement results, repeat with a fresh verifier. If budget or independence is unavailable, remove the disputed record from `findings.json`, keep its ledger unit as an unresolved candidate, and set `run_status: "incomplete"` with an exact `incomplete_reason`. Non-material wording or repository-line corrections may be applied directly when they do not change meaning or evidence.
 
-<<<<<<< HEAD:skills/security-audit/references/VALIDATION-AND-REPORTING.md
-After every applied replacement, rerun both validators and update linked ledger decisions. If a final verifier identifies a separate root cause, assign a new fingerprint and send it through independent candidate validation before inclusion. Set `run_status: "complete"` only when every ledger candidate has an independent final disposition, no carried-record unit remains `planned`, and every retained `confirmed` and `needs_validation` record passes Phase 5. A `rejected` record is final after independent Phase 3 disproval and does not need a separate Phase 5 pass, unless it is a material Phase 5 replacement requiring fresh verification under the rule above.
-=======
-After every applied replacement, rerun both validators and update linked ledger decisions. If a final verifier identifies a separate root cause, assign a new fingerprint and send it through independent candidate validation before inclusion. Set `run_status: "complete"` only when every ledger candidate has an independent final disposition and every retained record passes Phase 5. A finished `quick` or scoped profile uses `complete` with the partial-coverage disclosure in `REPORT.md`; do not encode that bounded profile as `incomplete`.
->>>>>>> 38c08ad (Validate run-metadata.json against the documented run-state contract):skills/security-audit/VALIDATION-AND-REPORTING.md
+After every applied replacement, rerun both validators and update linked ledger decisions. If a final verifier identifies a separate root cause, assign a new fingerprint and send it through independent candidate validation before inclusion. Set `run_status: "complete"` only when every ledger candidate has an independent final disposition, every retained record passes Phase 5, and the coverage ledger has no `in_progress` or `planned` units. Remaining `blocked` and `deferred` units must be counted in the coverage summary and named as partial-coverage limits; they do not by themselves make the run incomplete.
 
 Do not verify only `confirmed` records. A misleading `needs_validation` handoff wastes owner time and can preserve a false premise.
 
 ### Phase 6: Produce target-neutral reports from final records
 
-Only after Phase 5 passes for every `confirmed` and `needs_validation` record retained in `findings.json` and any material Phase 5 replacement (including a replacement to `rejected`) receives the required fresh verification, derive prose from the final records, the ledger, and the hunter `hardening` notes retained in ledger bookkeeping. An incomplete run may report independently verified records, but it must identify each unresolved ledger candidate and must not present it as a finding. The prose files never change a verdict, severity, blocker, or demonstrated impact.
+Only after Phase 5 passes for every record retained in `findings.json`, derive prose from the final records, the ledger, and the hunter `hardening` notes retained in ledger bookkeeping. An incomplete run may report independently verified records, but it must identify each unresolved ledger candidate and must not present it as a finding. The prose files never change a verdict, severity, blocker, or demonstrated impact.
 
 #### `REPORT.md`
 
@@ -167,7 +162,7 @@ Write:
 4. Each confirmed finding: repository source location, lower-trust principal, target-native bounded reproduction, conditions, actual result, impact, priority rationale, and smallest source fix.
 5. A separate `NEEDS VALIDATION` table. Give each lead's title, repository trace, exact blocker, bounded local next step, and safe owner-observed deployment check. Do not assign severity or call it a confirmed vulnerability.
 6. Separate hardening notes and positive source patterns.
-7. Coverage summary from the ledger: covered, candidate, blocked, and deferred counts, plus important exclusions and the final critic result.
+7. Coverage summary from the ledger: covered, candidate, blocked, deferred, and in_progress counts, plus important exclusions and the final critic result. An `in_progress` count above zero means an assignment is still open and the run is not complete.
 
 Do not describe rejected records as findings. Mention their fingerprints only when they explain a prior disagreement or coverage decision.
 

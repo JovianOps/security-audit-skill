@@ -114,8 +114,6 @@ During full audit setup, pick a profile from the user's request or propose one f
 
 A **scoped run** audits a subset: named paths, one subsystem, one companion domain, or the diff between two source refs. Seed ledger units only for in-scope surfaces and record everything else as `out_of_scope` — never as `covered`. A scoped or `quick` run must present itself as partial coverage.
 
-A finished `quick` or scoped pass that writes Phase 6 artifacts and passes the validators records `run_status: "complete"`. That value means the declared profile finished, not that the target was exhaustively covered. `REPORT.md` still has to disclose the partial coverage. Use `incomplete` only with one of the exact budget reasons below.
-
 Profiles change breadth and redundancy, never the evidence bar. Do not scale away the candidate gate, the source/local execution boundary, `needs_validation` discipline, schema validation, or independent verification of `confirmed` records.
 
 #### Cost budget
@@ -129,11 +127,11 @@ Spend it in this order:
 1. Count reconnaissance, every post-wave critic, and the separate final-clean critic as agent invocations.
 2. **Reserve critics and validation before hunting.** For `quick`, reserve its one post-wave final critic. Before every `standard` or `deep` hunter wave, reserve one immediate post-wave critic plus one distinct final-clean critic. Also reserve verifier cost from the profile (about 1 or 2 agents per expected candidate; when in doubt reserve 30% of the balance after critic reservation). Never assign hunters into either reserve.
 3. Assign hunters to units in priority order until the hunting allowance is spent. Spend the reserved post-wave critic immediately after that wave; keep the final-clean and validation reserves intact.
-4. Before a later wave, reserve its new post-wave critic again. If the remaining budget cannot cover the required critic calls and validation reserve, launch no hunters from that wave, mark its hunter-eligible planned units `deferred` with reason `budget_cannot_reserve_critics_and_validation`, and use the retained final-clean critic to record the resulting gap.
+4. Before a later wave, reserve its new post-wave critic again. If the remaining budget cannot cover the required critic calls and validation reserve, launch no hunters from that wave, mark its planned units `deferred` with reason `budget_cannot_reserve_critics_and_validation`, and use the retained final-clean critic to record the resulting gap.
 
-Before wave 1, update the pre-recon estimate with seeded units, implied hunter count, mandatory critic calls, validation reserve, and whether the remaining budget covers the plan. If it clearly cannot, say so and propose either a tighter scope or a coarser profile instead of silently thinning evidence. If later facts consume the required final-critic reserve, launch no hunters, mark all hunter-eligible planned work deferred (keep carried-record units planned for Phase 3), set the run incomplete with reason `critic_budget_exhausted`, and make no complete-coverage claim.
+Before wave 1, update the pre-recon estimate with seeded units, implied hunter count, mandatory critic calls, validation reserve, and whether the remaining budget covers the plan. If it clearly cannot, say so and propose either a tighter scope or a coarser profile instead of silently thinning evidence. If later facts consume the required final-critic reserve, launch no hunters, mark all planned work deferred, set the run incomplete with reason `critic_budget_exhausted`, and make no complete-coverage claim.
 
-A strict total-agent budget can still be exceeded by an unexpectedly large candidate set or by a material Phase 5 replacement that needs another independent verifier. If the remaining budget cannot validate every candidate, stop hunting, validate candidates in fingerprint order while the budget permits, and set `run_status: "incomplete"` plus `incomplete_reason: "validation_budget_exhausted"`. Keep each unvalidated fingerprint linked to a `candidate` ledger unit with that unresolved reason; an unvalidated carried record instead keeps its seeded unit `planned` until its Phase 3 verifier supplies the first check and owner. Disclose these pending carried fingerprints and units alongside unvalidated candidates. Do not put an unvalidated candidate in `findings.json`, relabel it `needs_validation`, or report the run as complete. Phase 6 may produce a partial report only if its first section states that candidate validation is incomplete and lists the affected fingerprints and units. Never exceed a user-set strict budget silently.
+A strict total-agent budget can still be exceeded by an unexpectedly large candidate set or by a material Phase 5 replacement that needs another independent verifier. If the remaining budget cannot validate every candidate, stop hunting, validate candidates in fingerprint order while the budget permits, and set `run_status: "incomplete"` plus `incomplete_reason: "validation_budget_exhausted"`. Keep each unvalidated fingerprint linked to a `candidate` ledger unit with that unresolved reason. Do not put an unvalidated candidate in `findings.json`, relabel it `needs_validation`, or report the run as complete. Phase 6 may produce a partial report only if its first section states that candidate validation is incomplete and lists the affected fingerprints and units. Never exceed a user-set strict budget silently.
 
 ## Core principles
 
@@ -174,15 +172,11 @@ In full audit mode, follow all six phases in order:
 1. **Reconnaissance** — map the source, trust boundaries, local build paths, companion selections, prior evidence, and initial deterministic coverage ledger with [RECONNAISSANCE.md](RECONNAISSANCE.md).
 2. **Coverage-led hunting waves** — assign isolated hunters from the ledger and collect structured candidate results with [HUNTING.md](HUNTING.md), [ATTACK-CLASSES.md](ATTACK-CLASSES.md), and the selected domain companions.
 3. **Candidate validation** — consolidate fingerprints and give every candidate to a fresh source verifier as defined in [VALIDATION-AND-REPORTING.md](VALIDATION-AND-REPORTING.md).
-4. **Structured output** — write all final `confirmed`, `needs_validation`, and `rejected` records to `findings.json`; validate it with `report-schema.json` and `validate-findings.cjs`, validate the coverage claim with `validate-coverage-ledger.cjs`, and validate `run-metadata.json` with `validate-run-metadata.cjs`.
+4. **Structured output** — write all final `confirmed`, `needs_validation`, and `rejected` records to `findings.json`; validate it with `report-schema.json` and `validate-findings.cjs`, and validate the coverage claim with `validate-coverage-ledger.cjs`.
 5. **Independent record verification** — use fresh agents to verify final source claims and reconcile corrections or state changes.
 6. **Target-neutral report** — derive `REPORT.md`, `FINDINGS-DETAIL.md`, and `NEEDS-VALIDATION.md` from the final records, with no live-probe instructions.
 
-<<<<<<< HEAD
 Do not end the run before one of exactly two terminal states: (a) all Phase 6 artifacts are written, both validators pass, and the coverage ledger was last checked with `--terminal` (zero `in_progress` and zero `planned` units), or (b) `run_status: "incomplete"` is recorded with its exact reason and the gap is disclosed in the report. Remaining `blocked` and `deferred` units are disclosed as partial coverage, not a silent complete-coverage claim. Never stop mid-phase.
-=======
-Do not end the run before one of exactly two terminal states: (a) all Phase 6 artifacts are written and the findings, coverage-ledger, and run-metadata validators pass, or (b) `run_status: "incomplete"` is recorded with its exact reason (`budget_cannot_fund_reconnaissance_and_reserves`, `critic_budget_exhausted`, or `validation_budget_exhausted`) and the gap is disclosed in the report. Never stop mid-phase.
->>>>>>> 38c08ad (Validate run-metadata.json against the documented run-state contract)
 
 ## Anti-patterns
 
@@ -193,6 +187,6 @@ Do not end the run before one of exactly two terminal states: (a) all Phase 6 ar
 5. Treating intended same-principal authority or self-impact as a cross-boundary result.
 6. Reporting a parser or runtime effect stronger than the observed effect.
 7. Emitting prose-only hunter results that cannot be deduplicated or verified.
-8. Re-hunting carried same-source prior confirmed root causes or using them as exemplars that anchor the hunt. Carried records still undergo current independent validation and appear in reports under their final verdict.
+8. Re-reporting carried same-source prior confirmed records or using them as exemplars that anchor the hunt.
 9. Assigning severity to `needs_validation` records.
 10. Writing the report before independent verification or letting prose and JSON disagree.
