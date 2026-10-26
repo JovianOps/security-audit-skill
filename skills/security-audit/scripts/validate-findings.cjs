@@ -46,11 +46,15 @@ const LIMITS = Object.freeze({
   canonicalKeyBytes: 1024 * 1024,
   uniqueSetBytes: 5 * 1024 * 1024,
   validationErrors: 100,
+  // Line numbers above this are not real source locations, and a consumer
+  // reading the report into a 32-bit integer cannot hold them. The schema only
+  // bounds `line` from below, and `Number.isInteger` is true for 1e21 and
+  // 1e308, which JSON re-serializes in exponential form.
+  sourceLine: 2147483647,
 });
 const VISIBLE_CONTENT = /[^\p{White_Space}\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/u;
 const PATH_FORBIDDEN_CHARACTER = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
 const WINDOWS_RESERVED_COMPONENT = /^(?:con|prn|aux|nul|clock\$|conin\$|conout\$|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\.|$)/iu;
-const FINGERPRINT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$/;
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const UNSAFE_DIAGNOSTIC_CHARACTER = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
 const MAX_DIAGNOSTIC_STRING_LENGTH = 256;
@@ -495,27 +499,23 @@ function collectFindingSemanticErrors(findings) {
     const base = `$[${index}]`;
 
     if (hasOwn(finding, "fingerprint") && typeof finding.fingerprint === "string") {
-      if (!FINGERPRINT_PATTERN.test(finding.fingerprint)) {
-        errors.push(`${base}.fingerprint: invalid fingerprint (must match [A-Za-z0-9][A-Za-z0-9._:/@+-]*)`);
+      if (fingerprints.has(finding.fingerprint)) {
+        errors.push(`${base}.fingerprint: duplicate of $[${fingerprints.get(finding.fingerprint)}].fingerprint`);
       } else {
-        if (fingerprints.has(finding.fingerprint)) {
-          errors.push(`${base}.fingerprint: duplicate of $[${fingerprints.get(finding.fingerprint)}].fingerprint`);
-        } else {
-          fingerprints.set(finding.fingerprint, index);
-        }
-        if (previousFingerprint !== null && previousFingerprint > finding.fingerprint) {
-          errors.push(`${base}.fingerprint: findings must be sorted lexicographically`);
-        }
-        previousFingerprint = finding.fingerprint;
+        fingerprints.set(finding.fingerprint, index);
       }
+      if (previousFingerprint !== null && previousFingerprint > finding.fingerprint) {
+        errors.push(`${base}.fingerprint: findings must be sorted lexicographically`);
+      }
+      previousFingerprint = finding.fingerprint;
     }
 
     for (const field of ["trace", "evidence"]) {
       if (!hasOwn(finding, field) || !Array.isArray(finding[field])) continue;
       finding[field].forEach((entry, entryIndex) => {
         if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
-        if (hasOwn(entry, "line") && (!Number.isInteger(entry.line) || entry.line < 1)) {
-          errors.push(`${base}.${field}[${entryIndex}].line: must be a positive integer`);
+        if (hasOwn(entry, "line") && (!Number.isInteger(entry.line) || entry.line < 1 || entry.line > LIMITS.sourceLine)) {
+          errors.push(`${base}.${field}[${entryIndex}].line: must be a positive integer no greater than ${LIMITS.sourceLine}`);
         }
         if (hasOwn(entry, "file") && !isSafeRelativeSourcePath(entry.file)) {
           errors.push(`${base}.${field}[${entryIndex}].file: must be a safe repository-relative source path`);
@@ -762,7 +762,6 @@ function run(file) {
 }
 
 module.exports = {
-  FINGERPRINT_PATTERN,
   LIMITS,
   PATH_FORBIDDEN_CHARACTER,
   UNSAFE_DIAGNOSTIC_CHARACTER,

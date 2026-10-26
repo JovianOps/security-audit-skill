@@ -17,6 +17,8 @@ The skill runs a structured audit in six phases:
 
 The parent runs `validate-coverage-ledger.cjs` after creating the ledger and after each later ledger update. It runs `validate-findings.cjs` in Phase 4 and again after every Phase 5 replacement.
 
+Once Phase 3 has moved validated units to `candidate`, run `validate-cross-consistency.cjs` to prove the pairing between the two files: every record in `findings.json` must trace by fingerprint to a `candidate` ledger unit that actually validated it. Run it while the ledger still holds the candidate fingerprints (before Phase 5 final dispositions clear them); an orphan fingerprint means the report claims a record no coverage unit ever produced.
+
 The verdicts are distinct: `confirmed` has a complete source trace and bounded observed result, `needs_validation` has an exact unresolved fact and no severity, and `rejected` records a disproved candidate.
 
 Multiple runs against the same repo are additive. The skill uses prior ledgers and findings to target gaps, revalidate changed source, and carry forward current-source evidence without treating stale or unresolved work as covered.
@@ -32,6 +34,7 @@ Multiple runs against the same repo are additive. The skill uses prior ledgers a
 | `MEMORY-SAFETY-AND-BINARY.md` | Memory-safety, binary, and kernel hunting classes for native targets |
 | `AI-AND-LLM.md` | Prompt-injection, agent/tool, and output-handling hunting classes for LLM-backed targets |
 | `WEB-PROTOCOL-AND-AUTH.md` | HTTP request-framing, cache, and authentication-protocol hunting classes for HTTP-protocol and auth targets |
+| `CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md` | Cryptographic primitives, randomness, nonce/IV handling, JWT verification, password hashing, TLS, and key-lifecycle hunting classes |
 | `CLIENT-SIDE.md` | DOM-injection, messaging-trust, UI-redress, and prototype-pollution hunting classes for client-side/browser targets |
 | `SUPPLY-CHAIN-AND-RELEASE.md` | Dependency, CI, release, signing, update, plugin, and extension hunting classes |
 | `CLOUD-AND-DEPLOYMENT.md` | IAM, infrastructure-as-code, container, serverless, ingress, and runtime-configuration hunting classes |
@@ -45,6 +48,8 @@ Multiple runs against the same repo are additive. The skill uses prior ledgers a
 | `validate-findings.test.cjs` | Findings-validator tests and producer-compatible fixture checks |
 | `validate-coverage-ledger.cjs` | Zero-dependency validator for `coverage-ledger.json` in Phases 1–5 |
 | `validate-coverage-ledger.test.cjs` | Coverage-ledger validator tests |
+| `validate-cross-consistency.cjs` | Zero-dependency cross-validator: findings fingerprints must trace to validated ledger candidates |
+| `validate-cross-consistency.test.cjs` | Cross-validator tests |
 
 ## Installation
 
@@ -86,7 +91,7 @@ The skill activates automatically when the request matches its trigger (security
 ## Requirements
 
 - A coding agent with a model that supports tool use and parallel sub-agents
-- Node.js for the zero-dependency findings and coverage-ledger validators. On POSIX they open input with `O_NOFOLLOW | O_NONBLOCK`; on Windows, which has neither flag, they refuse links, junctions, devices, and pipes by `lstat` and require the opened file to keep the same volume and file ID. Other platforms without the flags reject all input. Run their tests with `node --test "skills/security-audit/*.test.cjs"`; CI runs them on Linux, macOS, and Windows.
+- Node.js for the zero-dependency findings and coverage-ledger validators
 - An OS-enforced sandbox for target-controlled builds, tests, processes, browsers, emulators, fuzzers, and fixtures. It must disable external networking, use a sanitized allowlisted environment, enforce resource limits, and allow writes only to assigned scratch paths. Without these controls, the workflow keeps the lead as `needs_validation` instead of executing target code.
 
 ## Design principles

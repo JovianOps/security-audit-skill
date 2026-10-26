@@ -4,7 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const test = require("node:test");
-const schema = require("./report-schema.json");
+const schema = require("../resources/report-schema.json");
 const {
   LIMITS,
   collect,
@@ -279,6 +279,25 @@ test("rejects duplicate fingerprints and unique array entries", () => {
   second.fingerprint = first.fingerprint;
   assert(errorsFor([first, second]).some((error) => error.includes("duplicate of")));
   rejectMutation(needsValidation, (finding) => { finding.blockers = [finding.blockers[0], finding.blockers[0]]; });
+});
+
+test("rejects fingerprints that the ledger validator would reject", () => {
+  // The coverage-ledger validator enforces FINGERPRINT_PATTERN on
+  // result_fingerprints. Findings must apply the same constraint, or a
+  // record the findings validator accepts can never be joined to the unit
+  // that validated it.
+  const invalid = confirmed();
+  invalid.fingerprint = "bad fingerprint with spaces";
+  const errors = errorsFor([invalid]);
+  assert(errors.some((error) => error.includes("invalid fingerprint")));
+
+  const empty = confirmed();
+  empty.fingerprint = "";
+  assert(errorsFor([empty]).some((error) => error.includes("invalid fingerprint")));
+
+  const unicode = confirmed();
+  unicode.fingerprint = "src-\u00e9\u4e2d\u6587";
+  assert(errorsFor([unicode]).some((error) => error.includes("invalid fingerprint")));
 });
 
 test("uses canonical Set uniqueness for structured entries at the array limit", () => {
