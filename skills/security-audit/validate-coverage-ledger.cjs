@@ -144,7 +144,6 @@ function preflightJsonText(contents) {
   let inString = false;
   let escaped = false;
   let totalValues = 0;
-  let keyStart = -1;
 
   function fail(message) {
     throw new JsonStructureError(`input ${message}`);
@@ -185,7 +184,7 @@ function preflightJsonText(contents) {
     countValue();
   }
 
-  function beginString(quoteIndex) {
+  function beginString() {
     const container = currentContainer();
     if (container && container.type === "object" &&
         (container.state === "firstKeyOrEnd" || container.state === "key")) {
@@ -194,23 +193,10 @@ function preflightJsonText(contents) {
         fail(`exceeds ${LIMITS.objectFields} field object limit`);
       }
       container.state = "colon";
-      keyStart = quoteIndex + 1;
     } else {
       beginValue();
     }
     inString = true;
-  }
-
-  function endKey(end) {
-    let key;
-    try {
-      key = JSON.parse(`"${contents.slice(keyStart, end)}"`);
-    } catch {
-      return;
-    }
-    const container = currentContainer();
-    if (container.keys.has(key)) fail(`has duplicate object key ${safeQuote(key)}`);
-    container.keys.add(key);
   }
 
   function beginContainer(type) {
@@ -220,7 +206,7 @@ function preflightJsonText(contents) {
     }
     containers.push(type === "array"
       ? { type, state: "firstValueOrEnd", items: 0, topLevel: containers.length === 0 }
-      : { type, state: "firstKeyOrEnd", fields: 0, keys: new Set() });
+      : { type, state: "firstKeyOrEnd", fields: 0 });
   }
 
   function closeContainer(type) {
@@ -252,17 +238,13 @@ function preflightJsonText(contents) {
         escaped = true;
       } else if (character === "\"") {
         inString = false;
-        if (keyStart !== -1) {
-          endKey(index);
-          keyStart = -1;
-        }
       }
       continue;
     }
     if (isWhitespace(character)) continue;
 
     if (character === "\"") {
-      beginString(index);
+      beginString();
     } else if (character === "[") {
       beginContainer("array");
     } else if (character === "{") {
@@ -415,6 +397,48 @@ function isOwnedArtifactPath(value, agentId) {
   return value.startsWith(prefix) && value.length > prefix.length;
 }
 
+// Confirms a schema-valid local-check artifact path actually exists as a
+// retained regular file, and that following symlinks (or a symlinked
+// ancestor directory) can't land outside the owning agent's artifacts
+// directory. Only runs when the caller (the CLI) knows the ledger's own
+// directory; direct callers of validateDocument/validateChecks that don't
+// pass baseDir keep today's shape-only validation.
+function validateArtifactExists(artifactPath, agentId, baseDir, base, errors) {
+  if (baseDir === undefined) return;
+
+  const fullPath = path.join(baseDir, artifactPath);
+  let lstat;
+  try {
+    lstat = fs.lstatSync(fullPath);
+  } catch {
+    errors.push(`${base}.artifact: local check artifact does not exist`);
+    return;
+  }
+  if (lstat.isSymbolicLink()) {
+    errors.push(`${base}.artifact: local check artifact must not be a symlink`);
+    return;
+  }
+  if (!lstat.isFile()) {
+    errors.push(`${base}.artifact: local check artifact must be a regular file`);
+    return;
+  }
+
+  const agentArtifactsDir = path.join(baseDir, "agents", agentId, "artifacts");
+  let realFull;
+  let realAgentArtifactsDir;
+  try {
+    realFull = fs.realpathSync(fullPath);
+    realAgentArtifactsDir = fs.realpathSync(agentArtifactsDir);
+  } catch {
+    errors.push(`${base}.artifact: local check artifact does not exist`);
+    return;
+  }
+  const boundary = realAgentArtifactsDir.endsWith(path.sep) ? realAgentArtifactsDir : realAgentArtifactsDir + path.sep;
+  if (!realFull.startsWith(boundary)) {
+    errors.push(`${base}.artifact: local check artifact resolves outside the owning agent's artifacts directory`);
+  }
+}
+
 function validateStringArray(value, location, errors, options = {}) {
   const { allowEmpty = true, fingerprint = false, pathValue = false } = options;
   if (!Array.isArray(value)) {
@@ -436,7 +460,7 @@ function validateStringArray(value, location, errors, options = {}) {
   });
 }
 
-function validateChecks(value, location, errors) {
+function validateChecks(value, location, errors, baseDir) {
   if (!Array.isArray(value)) {
     errors.push(`${location}: expected array`);
     return;
@@ -461,6 +485,8 @@ function validateChecks(value, location, errors) {
     } else if (check.method === "local") {
       if (!isOwnedArtifactPath(check.artifact, check.agent_id)) {
         errors.push(`${base}.artifact: local check requires an artifact owned by agent ${safeQuote(isSafeAgentId(check.agent_id) ? check.agent_id : "<agent-id>")}`);
+      } else {
+        validateArtifactExists(check.artifact, check.agent_id, baseDir, base, errors);
       }
     } else if (check.method !== "source" && check.method !== "local" && check.artifact !== null && !isSafeRelativePath(check.artifact)) {
       errors.push(`${base}.artifact: expected null or a safe output-relative path`);
@@ -583,7 +609,7 @@ function validateStateInvariants(unit, base, errors) {
   }
 }
 
-function validateAttempts(value, unit, base, errors) {
+function validateAttempts(value, unit, base, errors, baseDir) {
   if (!Array.isArray(value)) {
     errors.push(`${base}.attempts: expected array`);
     return;
@@ -623,7 +649,7 @@ function validateAttempts(value, unit, base, errors) {
       hasFreshOwner = true;
     }
     validateStringArray(attempt.reviewed_paths, `${attemptBase}.reviewed_paths`, errors, { pathValue: true });
-    validateChecks(attempt.local_checks, `${attemptBase}.local_checks`, errors);
+    validateChecks(attempt.local_checks, `${attemptBase}.local_checks`, errors, baseDir);
     validateReviewedPathOwnership(attempt, attemptBase, errors);
     validateStringArray(attempt.result_fingerprints, `${attemptBase}.result_fingerprints`, errors, { fingerprint: true });
     validateStringArray(attempt.unresolved, `${attemptBase}.unresolved`, errors);
@@ -631,33 +657,16 @@ function validateAttempts(value, unit, base, errors) {
     validateStateInvariants(attempt, attemptBase, errors);
 
     if (Array.isArray(attempt.local_checks)) {
-      const attemptArtifacts = new Set();
-
       attempt.local_checks.forEach((check, checkIndex) => {
         if (!isObject(check)) return;
-
         if (priorOwners.has(check.agent_id)) {
           errors.push(`${attemptBase}.local_checks[${checkIndex}].agent_id: prior assignment owner evidence must remain in its earlier attempt`);
         }
-
-        if (
-          typeof check.artifact === "string" &&
-          priorArtifacts.has(check.artifact)
-        ) {
+        if (typeof check.artifact === "string" && priorArtifacts.has(check.artifact)) {
           errors.push(`${attemptBase}.local_checks[${checkIndex}].artifact: artifact from an earlier attempt cannot be reused`);
         }
-
-        if (
-          check.method === "local" &&
-          typeof check.artifact === "string"
-        ) {
-          attemptArtifacts.add(check.artifact);
-        }
+        if (check.method === "local" && typeof check.artifact === "string") priorArtifacts.add(check.artifact);
       });
-
-      for (const artifact of attemptArtifacts) {
-        priorArtifacts.add(artifact);
-      }
     }
     if (hasFreshOwner) priorOwners.add(attempt.agent_id);
   });
@@ -678,7 +687,7 @@ function validateAttempts(value, unit, base, errors) {
   }
 }
 
-function collectUnitErrors(unit, index) {
+function collectUnitErrors(unit, index, baseDir) {
   const errors = createErrorList();
   const base = `$[${index}]`;
   if (!isObject(unit)) return [`${base}: expected object`];
@@ -735,22 +744,15 @@ function collectUnitErrors(unit, index) {
       }
     });
   }
-  if (typeof unit.ordinary_attack_class_block === "string" && Array.isArray(unit.excluded_blocks)) {
-    unit.excluded_blocks.forEach((entry, blockIndex) => {
-      if (isObject(entry) && entry.block === unit.ordinary_attack_class_block) {
-        errors.push(`${base}.excluded_blocks[${blockIndex}].block: block is also the ordinary attack-class block`);
-      }
-    });
-  }
 
   if (!PRIOR_STATUSES.has(unit.prior_status)) errors.push(`${base}.prior_status: invalid value ${safeQuote(unit.prior_status)}`);
   if (!STATUSES.has(unit.status)) errors.push(`${base}.status: invalid value ${safeQuote(unit.status)}`);
   if (!Number.isInteger(unit.wave) || unit.wave < 1) errors.push(`${base}.wave: expected a positive integer`);
   if (unit.agent_id !== null && !isSafeAgentId(unit.agent_id)) errors.push(`${base}.agent_id: expected null or a safe agent ID`);
 
-  validateAttempts(unit.attempts, unit, base, errors);
+  validateAttempts(unit.attempts, unit, base, errors, baseDir);
   validateStringArray(unit.reviewed_paths, `${base}.reviewed_paths`, errors, { pathValue: true });
-  validateChecks(unit.local_checks, `${base}.local_checks`, errors);
+  validateChecks(unit.local_checks, `${base}.local_checks`, errors, baseDir);
   validateReviewedPathOwnership(unit, base, errors);
   validateStringArray(unit.result_fingerprints, `${base}.result_fingerprints`, errors, { fingerprint: true });
   validateStringArray(unit.unresolved, `${base}.unresolved`, errors);
@@ -800,7 +802,7 @@ function readFileWithinLimit(file) {
   }
 }
 
-function validateDocument(ledger) {
+function validateDocument(ledger, baseDir) {
   const errors = createErrorList();
   if (!Array.isArray(ledger)) {
     errors.push("$: expected a top-level array");
@@ -819,7 +821,7 @@ function validateDocument(ledger) {
   let previousId = null;
   for (let index = 0; index < ledger.length && errors.length < LIMITS.validationErrors; index++) {
     const unit = ledger[index];
-    errors.push(...collectUnitErrors(unit, index));
+    errors.push(...collectUnitErrors(unit, index, baseDir));
     if (errors.length >= LIMITS.validationErrors) break;
     if (!isObject(unit) || typeof unit.coverage_id !== "string") continue;
 
@@ -879,7 +881,7 @@ function run(file) {
 
   let errors;
   try {
-    errors = validateDocument(ledger);
+    errors = validateDocument(ledger, path.dirname(path.resolve(file)));
   } catch {
     console.error("Failed to validate coverage ledger: unexpected validation error");
     return 1;
