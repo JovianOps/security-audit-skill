@@ -79,7 +79,7 @@ Before execution, the parent opens and retains trusted, non-inheritable director
 10. Never recursively copy or glob scratch, extract an archive into artifacts, or open or promote a symlink, FIFO, socket, device, directory, hard-linked file, changing file, or file that exceeds its bound.
 11. If any check is unavailable, cannot be enforced, or fails, discard the scratch entry; if it is decisive evidence, retain `needs_validation` with the exact promotion blocker.
 
-[HUNTING.md](references/HUNTING.md) and [VALIDATION-AND-REPORTING.md](references/VALIDATION-AND-REPORTING.md) carry this procedure as one identical fenced block for hunter and verifier prompts; it states the same rules in the same order as this list.
+[HUNTING.md](HUNTING.md) and [VALIDATION-AND-REPORTING.md](VALIDATION-AND-REPORTING.md) carry this procedure as one identical fenced block for hunter and verifier prompts; it states the same rules in the same order as this list.
 
 For a reproduced check, record the command, exact test input, sandbox limits, and only the allowlisted environment variable names plus safe non-secret values needed to reproduce it. Never capture or copy the ambient environment, inherited variables, credential values, authentication state, or unrelated host paths. Launch from an empty environment rather than trying to redact one after execution.
 
@@ -91,7 +91,7 @@ The coverage, prior-run, profile, and budget requirements in this section apply 
 
 ### Coverage and prior runs
 
-No one pass is complete. Build a deterministic coverage plan before hunting and update it after every agent result. [RECONNAISSANCE.md](references/RECONNAISSANCE.md) defines the stable coverage units and [HUNTING.md](references/HUNTING.md) defines coverage-critic waves. The parent alone updates the ledger.
+No one pass is complete. Build a deterministic coverage plan before hunting and update it after every agent result. [RECONNAISSANCE.md](RECONNAISSANCE.md) defines the stable coverage units and [HUNTING.md](HUNTING.md) defines coverage-critic waves. The parent alone updates the ledger.
 
 If prior runs exist, read every compatible `coverage-ledger.json` and `findings.json` before planning the current run:
 
@@ -108,9 +108,11 @@ If no prior ledger exists, say so in the final coverage statement. Never imply t
 
 During full audit setup, pick a profile from the user's request or propose one from the target's size and stakes. Record it in `run-metadata.json` (`profile`, `scope_paths`) and state it in the report. The default is `standard`.
 
-- **`quick`** — a bounded pass for small targets, re-runs, or a fast first look. Coarsen ledger units to surface × boundary × attack class (subsystem uses the fixed canonical `profile/quick/all-in-scope-subsystems` identifier), run exactly one hunter wave followed by exactly one final coverage-critic pass, and use one fresh verifier per candidate for both candidate validation and final record verification. Do not launch a follow-up hunter wave: record the critic's accepted discoveries and reassignments as `deferred`.
+- **`quick`** — a bounded pass for small targets, re-runs, or a fast first look. Coarsen ledger units to surface × boundary × attack class (subsystem uses the fixed canonical `profile/quick/all-in-scope-subsystems` identifier), run exactly one hunter wave followed by exactly one final coverage-critic pass, and use one fresh verifier per candidate for both candidate validation and final record verification. Do not launch a follow-up hunter wave: record the critic's accepted discoveries and reassignments as `deferred`. A same-wave malformed-hunter retry is part of that one wave, not a second wave; after it, never leave a unit `planned`.
 - **`standard`** — the workflow as written.
 - **`deep`** — for high-stakes or large targets. Split ledger units per subsystem and lifecycle mode, run critic waves to a clean pass, keep candidate validation and final record verification as separate fresh agents, and give `prior_covered_same_source` units an independent second pass.
+
+A failed, malformed, or unsupported hunter conclusion is not coverage. Discard it without repairing the JSON. Retry that assignment once in the same wave with a fresh owner, spending one hunting-allowance invocation and never the critic or validation reserve. If the hunting allowance cannot fund the retry, skip it. After a second malformed result, or when the retry cannot run: in `standard` and `deep`, leave the unit `planned` for a later wave; in `quick`, set `status: "deferred"`, `agent_id: null`, empty evidence arrays, and `unresolved: ["malformed_hunter_return"]` before the final critic runs. `quick` has no later assignment, so a `planned` leftover would only be swept into `deferred` with a critic reason that hides the failure mode.
 
 A **scoped run** audits a subset: named paths, one subsystem, one companion domain, or the diff between two source refs. Seed ledger units only for in-scope surfaces and record everything else as `out_of_scope` — never as `covered`. A scoped or `quick` run must present itself as partial coverage.
 
@@ -126,12 +128,12 @@ Spend it in this order:
 
 1. Count reconnaissance, every post-wave critic, and the separate final-clean critic as agent invocations.
 2. **Reserve critics and validation before hunting.** For `quick`, reserve its one post-wave final critic. Before every `standard` or `deep` hunter wave, reserve one immediate post-wave critic plus one distinct final-clean critic. Also reserve verifier cost from the profile (about 1 or 2 agents per expected candidate; when in doubt reserve 30% of the balance after critic reservation). Never assign hunters into either reserve.
-3. Assign hunters to units in priority order until the hunting allowance is spent. Spend the reserved post-wave critic immediately after that wave; keep the final-clean and validation reserves intact.
-4. Before a later wave, reserve its new post-wave critic again. If the remaining budget cannot cover the required critic calls and validation reserve, launch no hunters from that wave, mark its hunter-eligible planned units `deferred` with reason `budget_cannot_reserve_critics_and_validation`, and use the retained final-clean critic to record the resulting gap.
+3. Assign hunters to units in priority order until the hunting allowance is spent. A same-wave malformed-hunter retry spends hunting allowance the same way; never take it from a critic or validation reserve. If the remaining hunting allowance cannot fund the retry, skip it and follow the malformed-return rule above. Spend the reserved post-wave critic immediately after that wave; keep the final-clean and validation reserves intact.
+4. Before a later wave, reserve its new post-wave critic again. If the remaining budget cannot cover the required critic calls and validation reserve, launch no hunters from that wave, mark its planned units `deferred` with reason `budget_cannot_reserve_critics_and_validation`, and use the retained final-clean critic to record the resulting gap.
 
-Before wave 1, update the pre-recon estimate with seeded units, implied hunter count, mandatory critic calls, validation reserve, and whether the remaining budget covers the plan. If it clearly cannot, say so and propose either a tighter scope or a coarser profile instead of silently thinning evidence. If later facts consume the required final-critic reserve, launch no hunters, mark all hunter-eligible planned work deferred (keep carried-record units planned for Phase 3), set the run incomplete with reason `critic_budget_exhausted`, and make no complete-coverage claim.
+Before wave 1, update the pre-recon estimate with seeded units, implied hunter count, mandatory critic calls, validation reserve, and whether the remaining budget covers the plan. If it clearly cannot, say so and propose either a tighter scope or a coarser profile instead of silently thinning evidence. If later facts consume the required final-critic reserve, launch no hunters, mark all planned work deferred, set the run incomplete with reason `critic_budget_exhausted`, and make no complete-coverage claim.
 
-A strict total-agent budget can still be exceeded by an unexpectedly large candidate set or by a material Phase 5 replacement that needs another independent verifier. If the remaining budget cannot validate every candidate, stop hunting, validate candidates in fingerprint order while the budget permits, and set `run_status: "incomplete"` plus `incomplete_reason: "validation_budget_exhausted"`. Keep each unvalidated fingerprint linked to a `candidate` ledger unit with that unresolved reason; an unvalidated carried record instead keeps its seeded unit `planned` until its Phase 3 verifier supplies the first check and owner. Disclose these pending carried fingerprints and units alongside unvalidated candidates. Do not put an unvalidated candidate in `findings.json`, relabel it `needs_validation`, or report the run as complete. Phase 6 may produce a partial report only if its first section states that candidate validation is incomplete and lists the affected fingerprints and units. Never exceed a user-set strict budget silently.
+A strict total-agent budget can still be exceeded by an unexpectedly large candidate set or by a material Phase 5 replacement that needs another independent verifier. If the remaining budget cannot validate every candidate, stop hunting, validate candidates in fingerprint order while the budget permits, and set `run_status: "incomplete"` plus `incomplete_reason: "validation_budget_exhausted"`. Keep each unvalidated fingerprint linked to a `candidate` ledger unit with that unresolved reason. Do not put an unvalidated candidate in `findings.json`, relabel it `needs_validation`, or report the run as complete. Phase 6 may produce a partial report only if its first section states that candidate validation is incomplete and lists the affected fingerprints and units. Never exceed a user-set strict budget silently.
 
 ## Core principles
 
@@ -167,18 +169,16 @@ For each confirmed finding, identify the invariant the code must enforce and the
 
 ## Full audit workflow
 
-For cryptographic implementation and key-lifecycle boundaries, select [CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md](CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md): encryption, randomness, nonce/IV handling, signatures/JWT, password hashing, TLS peer validation, and key storage/rotation. In guidance mode, read only relevant blocks. In full audit mode, include applicable classes in the coverage ledger using the companion-selection rules in [RECONNAISSANCE.md](RECONNAISSANCE.md).
-
 In full audit mode, follow all six phases in order:
 
-1. **Reconnaissance** — map the source, trust boundaries, local build paths, companion selections, prior evidence, and initial deterministic coverage ledger with [RECONNAISSANCE.md](references/RECONNAISSANCE.md).
-2. **Coverage-led hunting waves** — assign isolated hunters from the ledger and collect structured candidate results with [HUNTING.md](references/HUNTING.md), [ATTACK-CLASSES.md](references/ATTACK-CLASSES.md), and the selected domain companions.
-3. **Candidate validation** — consolidate fingerprints and give every candidate to a fresh source verifier as defined in [VALIDATION-AND-REPORTING.md](references/VALIDATION-AND-REPORTING.md).
-4. **Structured output** — write all final `confirmed`, `needs_validation`, and `rejected` records to `findings.json`; validate it with `resources/report-schema.json` and `scripts/validate-findings.cjs`, and validate the coverage claim with `scripts/validate-coverage-ledger.cjs`.
+1. **Reconnaissance** — map the source, trust boundaries, local build paths, companion selections, prior evidence, and initial deterministic coverage ledger with [RECONNAISSANCE.md](RECONNAISSANCE.md).
+2. **Coverage-led hunting waves** — assign isolated hunters from the ledger and collect structured candidate results with [HUNTING.md](HUNTING.md), [ATTACK-CLASSES.md](ATTACK-CLASSES.md), and the selected domain companions.
+3. **Candidate validation** — consolidate fingerprints and give every candidate to a fresh source verifier as defined in [VALIDATION-AND-REPORTING.md](VALIDATION-AND-REPORTING.md).
+4. **Structured output** — write all final `confirmed`, `needs_validation`, and `rejected` records to `findings.json`; validate it with `report-schema.json` and `validate-findings.cjs`, and validate the coverage claim with `validate-coverage-ledger.cjs`.
 5. **Independent record verification** — use fresh agents to verify final source claims and reconcile corrections or state changes.
 6. **Target-neutral report** — derive `REPORT.md`, `FINDINGS-DETAIL.md`, and `NEEDS-VALIDATION.md` from the final records, with no live-probe instructions.
 
-Do not end the run before one of exactly two terminal states: (a) all Phase 6 artifacts are written, both validators pass, and the coverage ledger was last checked with `--terminal` (zero `in_progress` and zero `planned` units), or (b) `run_status: "incomplete"` is recorded with its exact reason and the gap is disclosed in the report. Remaining `blocked` and `deferred` units are disclosed as partial coverage, not a silent complete-coverage claim. Never stop mid-phase.
+Do not end the run before one of exactly two terminal states: (a) all Phase 6 artifacts are written and both validators pass, or (b) `run_status: "incomplete"` is recorded with its exact reason and the gap is disclosed in the report. Never stop mid-phase.
 
 ## Anti-patterns
 
@@ -189,6 +189,7 @@ Do not end the run before one of exactly two terminal states: (a) all Phase 6 ar
 5. Treating intended same-principal authority or self-impact as a cross-boundary result.
 6. Reporting a parser or runtime effect stronger than the observed effect.
 7. Emitting prose-only hunter results that cannot be deduplicated or verified.
-8. Re-hunting carried same-source prior confirmed root causes or using them as exemplars that anchor the hunt. Carried records still undergo current independent validation and appear in reports under their final verdict.
+8. Re-reporting carried same-source prior confirmed records or using them as exemplars that anchor the hunt.
 9. Assigning severity to `needs_validation` records.
 10. Writing the report before independent verification or letting prose and JSON disagree.
+11. Treating a malformed hunter return as coverage, repairing it, or leaving a `quick` unit `planned` after the hunter wave.
