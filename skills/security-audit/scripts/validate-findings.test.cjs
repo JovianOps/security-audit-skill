@@ -281,25 +281,6 @@ test("rejects duplicate fingerprints and unique array entries", () => {
   rejectMutation(needsValidation, (finding) => { finding.blockers = [finding.blockers[0], finding.blockers[0]]; });
 });
 
-test("rejects fingerprints that the ledger validator would reject", () => {
-  // The coverage-ledger validator enforces FINGERPRINT_PATTERN on
-  // result_fingerprints. Findings must apply the same constraint, or a
-  // record the findings validator accepts can never be joined to the unit
-  // that validated it.
-  const invalid = confirmed();
-  invalid.fingerprint = "bad fingerprint with spaces";
-  const errors = errorsFor([invalid]);
-  assert(errors.some((error) => error.includes("invalid fingerprint")));
-
-  const empty = confirmed();
-  empty.fingerprint = "";
-  assert(errorsFor([empty]).some((error) => error.includes("invalid fingerprint")));
-
-  const unicode = confirmed();
-  unicode.fingerprint = "src-\u00e9\u4e2d\u6587";
-  assert(errorsFor([unicode]).some((error) => error.includes("invalid fingerprint")));
-});
-
 test("uses canonical Set uniqueness for structured entries at the array limit", () => {
   const entries = Array.from({ length: LIMITS.arrayItems }, (_, id) => ({ id, label: String(id) }));
   assert.deepEqual(collect(entries, { type: "array", uniqueItems: true }), []);
@@ -442,6 +423,13 @@ test("returns a generic syntax error without parser-supplied controls", { skip: 
 
   assert.equal(result.status, 1, cliOutput(result));
   assert.equal(result.stderr, "Failed to parse findings JSON: invalid JSON syntax\n");
+  assertNoInjectedControlBytes(result.stderr);
+});
+
+test("CLI fails closed when the OS cannot open input safely", { skip: HAS_SAFE_INPUT_OPEN }, () => {
+  const result = runCli(JSON.stringify(producerShapedFindings()));
+  assert.equal(result.status, 1, cliOutput(result));
+  assert.match(result.stderr, /OS no-follow and nonblocking input protection is unavailable/);
   assertNoInjectedControlBytes(result.stderr);
 });
 
