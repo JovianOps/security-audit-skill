@@ -32,7 +32,8 @@ unavailable or fails, do not use that file as evidence.
    result when possible. Verify inputs, interface shape, conditions, and affected
    dummy principal/resource. Do not infer a stronger result or continue after it.
 4. Verify that likelihood, impact, confidence, and the proposed source fix match only
-   what the evidence establishes.
+   what the evidence establishes, and that `remediation.preserved_uses` names the
+   legitimate users of every path the fix refuses.
 5. For a proposed needs_validation candidate, decide whether the blocker is genuinely
    outside source/local observation. If source refutes the trace, reject it. If the
    missing fact remains decisive, keep needs_validation and make the local and
@@ -102,7 +103,7 @@ The parent writes all independently decided findings to `<output-dir>/findings.j
 
 Read `../resources/report-schema.json` immediately before writing. It uses `additionalProperties: false`; do not carry hunter wrapper fields into a record. Keep these verdict contracts distinct:
 
-- A `confirmed` record uses `root_cause`, `intended_behavior`, `conditions`, `execution`, `remediation`, `severity`, and `confidence`. It must not use `claimed_root_cause`, `blockers`, `validation_plan`, or `reason`. `execution` is target-neutral and uses the target's native interface: API/HTTP input, CLI call, library call, message, file fixture, browser action, rendered policy, or local harness as applicable. `observed_result` is nonempty and factual.
+- A `confirmed` record uses `root_cause`, `intended_behavior`, `conditions`, `execution`, `remediation`, `severity`, and `confidence`. `intended_behavior` says what the path is for as well as what it must prevent. It must not use `claimed_root_cause`, `blockers`, `validation_plan`, or `reason`. `execution` is target-neutral and uses the target's native interface: API/HTTP input, CLI call, library call, message, file fixture, browser action, rendered policy, or local harness as applicable. `observed_result` is nonempty and factual.
 - A `needs_validation` record uses `claimed_root_cause`, `trace`, `evidence`, `blockers`, and at least one nonempty `validation_plan.local` or `validation_plan.deployment` field. Include both only when both contexts can resolve distinct facts. It must not use severity, execution, remediation, reason, or confirmed root cause.
 - A `rejected` record uses `claimed_root_cause`, `trace`, `evidence`, and `reason`. It must not use severity, execution, remediation, blockers, validation plan, or confirmed root cause.
 
